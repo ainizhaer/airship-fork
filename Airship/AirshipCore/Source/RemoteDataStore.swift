@@ -11,7 +11,7 @@ public class RemoteDataStore : NSObject {
 
     @objc
     public init(storeName: String, inMemory: Bool) {
-        let modelURL = AirshipCoreResources.bundle.url(forResource: "UARemoteData", withExtension: "momd")
+        let modelURL = AirshipResources.bundle.url(forResource: "UARemoteData", withExtension: "momd")
         self.coreData = UACoreData(modelURL: modelURL!, inMemory: inMemory, stores: [storeName])
     }
 

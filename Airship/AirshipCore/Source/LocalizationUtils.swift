@@ -40,7 +40,7 @@ public class LocalizationUtils : NSObject {
     private static func localizedString(_ string:String, withTable table: String, moduleBundle: Bundle?, defaultValue: String?, fallbackLocale: String?) -> String? {
         
         let mainBundle = Bundle.main
-        let coreBundle = AirshipCoreResources.bundle
+        let coreBundle = AirshipResources.bundle
         
         var string = sanitizedLocalizedString(string,
                                               withTable: table,

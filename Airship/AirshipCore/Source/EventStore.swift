@@ -16,7 +16,7 @@ public class EventStore : NSObject, EventStoreProtocol {
     @objc
     public init(config: RuntimeConfig?) {
         let storeName = String(format: EventStore.fileFormat, config?.appKey ?? "")
-        let modelURL = AirshipCoreResources.bundle.url(forResource: "UAEvents", withExtension: "momd")
+        let modelURL = AirshipResources.bundle.url(forResource: "UAEvents", withExtension: "momd")
         self.coreData = UACoreData(modelURL: modelURL!, inMemory: false, stores: [storeName])
 
         super.init()

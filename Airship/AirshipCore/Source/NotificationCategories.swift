@@ -28,7 +28,7 @@ public class NotificationCategories : NSObject {
      */
     @objc
     public class func defaultCategories(withRequireAuth requireAuth: Bool) -> Set<UNNotificationCategory> {
-        guard let path = AirshipCoreResources.bundle.path(forResource: "UANotificationCategories", ofType: "plist") else {
+        guard let path = AirshipResources.bundle.path(forResource: "UANotificationCategories", ofType: "plist") else {
             return []
         }
 
@@ -173,13 +173,13 @@ public class NotificationCategories : NSObject {
         if let titleResource = actionDefinition["title_resource"] as? String {
             let localizedTitle = LocalizationUtils.localizedString(titleResource,
                                                                          withTable: "UrbanAirship",
-                                                                         moduleBundle: AirshipCoreResources.bundle,
+                                                                         moduleBundle: AirshipResources.bundle,
                                                                          defaultValue: title)
             
             if localizedTitle == title {
                 return LocalizationUtils.localizedString(titleResource,
                                                                withTable: "AirshipAccengage",
-                                                               moduleBundle: AirshipCoreResources.bundle,
+                                                               moduleBundle: AirshipResources.bundle,
                                                                defaultValue: title)
             }
             return localizedTitle

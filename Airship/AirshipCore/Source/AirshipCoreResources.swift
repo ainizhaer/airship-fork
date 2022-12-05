@@ -1,14 +1,14 @@
 /* Copyright Airship and Contributors */
 
 @objc(UAirshipCoreResources)
-public class AirshipCoreResources : NSObject {
+public class AirshipResources : NSObject {
 
     @objc
     public static let bundle = findBundle()
 
     private class func findBundle() -> Bundle {
         let mainBundle =  Bundle.main
-        let sourceBundle = Bundle(for: AirshipCoreResources.self)
+        let sourceBundle = Bundle(for: AirshipResources.self)
 
         // SPM
         if let path = mainBundle.path(forResource:"Airship_AirshipCore", ofType: "bundle") {
@@ -18,14 +18,14 @@ public class AirshipCoreResources : NSObject {
         }
 
         // Cocopaods (static)
-        if let path = mainBundle.path(forResource:"AirshipCoreResources", ofType: "bundle") {
+        if let path = mainBundle.path(forResource:"AirshipResources", ofType: "bundle") {
             if let bundle = Bundle(path: path) {
                 return bundle
             }
         }
 
         // Cocopaods (framework)
-        if let path = sourceBundle.path(forResource:"AirshipCoreResources", ofType: "bundle") {
+        if let path = sourceBundle.path(forResource:"AirshipResources", ofType: "bundle") {
             if let bundle = Bundle(path: path) {
                 return bundle
             }
