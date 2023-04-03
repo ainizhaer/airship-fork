@@ -213,7 +213,7 @@ public class Contact : NSObject, Component, ContactProtocol {
         }
         set {
             if let data = try? self.encoder.encode(newValue) {
-                self.dataStore.setValue(data, forKey: Contact.contactInfoKey)
+                self.dataStore.setObject(data, forKey: Contact.contactInfoKey)
             }
         }
     }
@@ -258,7 +258,7 @@ public class Contact : NSObject, Component, ContactProtocol {
         }
         set {
             if let data = try? self.encoder.encode(newValue) {
-                self.dataStore.setValue(data, forKey: Contact.anonContactDataKey)
+                self.dataStore.setObject(data, forKey: Contact.anonContactDataKey)
             }
         }
     }
@@ -269,7 +269,7 @@ public class Contact : NSObject, Component, ContactProtocol {
             return date ?? Date.distantPast
         }
         set {
-            self.dataStore.setValue(newValue, forKey: Contact.resolveDateKey)
+            self.dataStore.setObject(newValue, forKey: Contact.resolveDateKey)
         }
     }
     
@@ -603,6 +603,7 @@ public class Contact : NSObject, Component, ContactProtocol {
     @objc
     public func editSubscriptionLists() -> ScopedSubscriptionListEditor {
         return ScopedSubscriptionListEditor(date: self.date) { updates in
+
             guard !updates.isEmpty else {
                 return
             }
@@ -651,15 +652,19 @@ public class Contact : NSObject, Component, ContactProtocol {
                 var subscriptions = try self.resolveSubscriptionLists(contactID)
 
                 // Local history
-                let localHistory = self.cachedSubscriptionListsHistory.values.compactMap { cached in
-                    cached.0 == contactID ? cached.1 : nil
-                }
-                subscriptions = AudienceUtils.applySubscriptionListsUpdates(subscriptions,
-                                                                          updates: localHistory)
+                self.operationLock.sync {
+                    let localHistory = self.cachedSubscriptionListsHistory.values.compactMap { cached in
+                        cached.0 == contactID ? cached.1 : nil
+                    }
+                    let pending = self.pendingSubscriptionListUpdates
 
-                // Pending
-                subscriptions = AudienceUtils.applySubscriptionListsUpdates(subscriptions,
-                                                                            updates: self.pendingSubscriptionListUpdates)
+                    subscriptions = AudienceUtils.applySubscriptionListsUpdates(subscriptions,
+                                                                              updates: localHistory)
+
+                    // Pending
+                    subscriptions = AudienceUtils.applySubscriptionListsUpdates(subscriptions,
+                                                                                updates: pending)
+                }
 
                 callback?(AudienceUtils.wrap(subscriptions), nil)
             } catch {
@@ -756,15 +761,19 @@ public class Contact : NSObject, Component, ContactProtocol {
     }
 
     private func enqueueTask() {
+
+        let nextType: OperationType? = self.getOperations().first { !shouldSkipOperation($0, isNext: true) }?.type
+
+
         guard self.channel.identifier != nil,
               self.isComponentEnabled,
-              let next = self.prepareNextOperation() else {
+              let nextType = nextType else {
             return
         }
 
         var rateLimitIDs = [Contact.updateRateLimitID]
 
-        switch(next.type) {
+        switch(nextType) {
         case .resolve: fallthrough
         case .identify: fallthrough
         case .reset:
@@ -788,7 +797,7 @@ public class Contact : NSObject, Component, ContactProtocol {
             return
         }
 
-        let disposable = self.performOperation(operation: operation, channelID: channelID) { response in
+        self.performOperation(operation: operation, channelID: channelID) { response in
             if let response = response {
                 if (response.isServerError) {
                     // retry
@@ -803,28 +812,18 @@ public class Contact : NSObject, Component, ContactProtocol {
                 task.taskFailed()
             }
         }
-        
-        task.expirationHandler = {
-            disposable?.dispose()
-        }
     }
     
-    private func performOperation(operation: ContactOperation, channelID: String, completionHandler: @escaping (HTTPResponse?) -> Void) -> Disposable? {
+    private func performOperation(operation: ContactOperation, channelID: String, completionHandler: @escaping (HTTPResponse?) -> Void) {
         switch(operation.type) {
         case .update:
             guard let contactInfo = self.lastContactInfo, let updatePayload = operation.payload as? UpdatePayload else {
                 self.removeFirstOperation()
                 completionHandler(nil)
-                return nil
+                return
             }
-            
-            if let updates = updatePayload.subscriptionListsUpdates {
-                for update in updates {
-                    self.cachedSubscriptionListsHistory.append((contactInfo.contactID, update))
-                }
-            }
-            
-            return self.contactAPIClient.update(identifier: contactInfo.contactID,
+
+            self.contactAPIClient.update(identifier: contactInfo.contactID,
                                                 tagGroupUpdates: updatePayload.tagUpdates,
                                                 attributeUpdates: updatePayload.attrubuteUpdates,
                                                 subscriptionListUpdates: updatePayload.subscriptionListsUpdates) { response, error in
@@ -833,6 +832,15 @@ public class Contact : NSObject, Component, ContactProtocol {
                     if (contactInfo.isAnonymous) {
                         self.updateAnonData(updates: updatePayload)
                     }
+
+                    self.operationLock.sync {
+                        if let updates = updatePayload.subscriptionListsUpdates {
+                            for update in updates {
+                                self.cachedSubscriptionListsHistory.append((contactInfo.contactID, update))
+                            }
+                        }
+                    }
+
                     
                     let payload : [String : Any] = [
                         Contact.tagsKey : updatePayload.tagUpdates ?? [],
@@ -847,28 +855,28 @@ public class Contact : NSObject, Component, ContactProtocol {
             guard let identifyPayload = operation.payload as? IdentifyPayload else {
                 self.removeFirstOperation()
                 completionHandler(nil)
-                return nil
+                return
             }
             var contactID: String? = nil
             if (self.lastContactInfo?.isAnonymous ?? false) {
                 contactID = self.lastContactInfo?.contactID
             }
             
-            return self.contactAPIClient.identify(channelID: channelID, namedUserID: identifyPayload.identifier, contactID: contactID) { response, error in
+            self.contactAPIClient.identify(channelID: channelID, namedUserID: identifyPayload.identifier, contactID: contactID) { response, error in
                 Contact.logOperationResult(operation: operation, response: response, error: error)
                 self.processContactResponse(response, namedUserID: identifyPayload.identifier)
                 completionHandler(response)
             }
             
         case .reset:
-            return self.contactAPIClient.reset(channelID: channelID) { response, error in
+            self.contactAPIClient.reset(channelID: channelID) { response, error in
                 Contact.logOperationResult(operation: operation, response: response, error: error)
                 self.processContactResponse(response)
                 completionHandler(response)
             }
 
         case .resolve:
-            return self.contactAPIClient.resolve(channelID: channelID) { response, error in
+            self.contactAPIClient.resolve(channelID: channelID) { response, error in
                 Contact.logOperationResult(operation: operation, response: response, error: error)
                 self.processContactResponse(response)
                 
@@ -883,10 +891,10 @@ public class Contact : NSObject, Component, ContactProtocol {
             guard let contactInfo = self.lastContactInfo, let registerPayload = operation.payload as? RegisterEmailPayload else {
                 self.removeFirstOperation()
                 completionHandler(nil)
-                return nil
+                return
             }
             
-            return self.contactAPIClient.registerEmail(identifier: contactInfo.contactID, address: registerPayload.address, options: registerPayload.options) { response, error in
+            self.contactAPIClient.registerEmail(identifier: contactInfo.contactID, address: registerPayload.address, options: registerPayload.options) { response, error in
                 Contact.logOperationResult(operation: operation, response: response, error: error)
                 self.processChannelRegistration(response)
                 completionHandler(response)
@@ -896,10 +904,10 @@ public class Contact : NSObject, Component, ContactProtocol {
             guard let contactInfo = self.lastContactInfo, let registerPayload = operation.payload as? RegisterSMSPayload else {
                 self.removeFirstOperation()
                 completionHandler(nil)
-                return nil
+                return
             }
             
-            return self.contactAPIClient.registerSMS(identifier: contactInfo.contactID, msisdn: registerPayload.msisdn, options: registerPayload.options) { response, error in
+            self.contactAPIClient.registerSMS(identifier: contactInfo.contactID, msisdn: registerPayload.msisdn, options: registerPayload.options) { response, error in
                 Contact.logOperationResult(operation: operation, response: response, error: error)
                 self.processChannelRegistration(response)
                 completionHandler(response)
@@ -909,10 +917,10 @@ public class Contact : NSObject, Component, ContactProtocol {
             guard let contactInfo = self.lastContactInfo, let registerPayload = operation.payload as? RegisterOpenPayload else {
                 self.removeFirstOperation()
                 completionHandler(nil)
-                return nil
+                return
             }
             
-            return self.contactAPIClient.registerOpen(identifier: contactInfo.contactID, address: registerPayload.address, options: registerPayload.options) { response, error in
+            self.contactAPIClient.registerOpen(identifier: contactInfo.contactID, address: registerPayload.address, options: registerPayload.options) { response, error in
                 Contact.logOperationResult(operation: operation, response: response, error: error)
                 self.processChannelRegistration(response)
                 completionHandler(response)
@@ -922,17 +930,16 @@ public class Contact : NSObject, Component, ContactProtocol {
             guard let contactInfo = self.lastContactInfo, let payload = operation.payload as? AssociateChannelPayload else {
                 self.removeFirstOperation()
                 completionHandler(nil)
-                return nil
+                return
             }
             
-            return self.contactAPIClient.associateChannel(identifier: contactInfo.contactID,
+            self.contactAPIClient.associateChannel(identifier: contactInfo.contactID,
                                                           channelID: payload.channelID,
                                                           channelType: payload.channelType) { response, error in
                 Contact.logOperationResult(operation: operation, response: response, error: error)
                 self.processChannelRegistration(response)
                 completionHandler(response)
             }
-            
         }
     }
     
@@ -1088,7 +1095,7 @@ public class Contact : NSObject, Component, ContactProtocol {
     private func storeOperations(_ operations: [ContactOperation]) {
         operationLock.sync {
             if let data = try? self.encoder.encode(operations) {
-                self.dataStore.setValue(data, forKey: Contact.operationsKey)
+                self.dataStore.setObject(data, forKey: Contact.operationsKey)
             }
         }
     }
@@ -1122,27 +1129,27 @@ public class Contact : NSObject, Component, ContactProtocol {
                 case .update:
                     // Collapse any sequential updates (ignoring anything that can be skipped inbetween)
                     while (!operations.isEmpty) {
-                        let first = operations.first!
-                        if (self.shouldSkipOperation(first, isNext: false)) {
+                        let nextNext = operations.first!
+                        if (self.shouldSkipOperation(nextNext, isNext: false)) {
                             operations.removeFirst()
                             continue
                         }
                         
-                        if (first.type == .update) {
-                            let firstPayload = first.payload as! UpdatePayload
+                        if (nextNext.type == .update) {
                             let nextPayload = next!.payload as! UpdatePayload
-                            
+                            let nextNextPayload = nextNext.payload as! UpdatePayload
+
                             var combinedTags: [TagGroupUpdate] = []
-                            combinedTags.append(contentsOf: firstPayload.tagUpdates ?? [])
                             combinedTags.append(contentsOf: nextPayload.tagUpdates ?? [])
+                            combinedTags.append(contentsOf: nextNextPayload.tagUpdates ?? [])
 
                             var combinedAttributes: [AttributeUpdate] = []
-                            combinedAttributes.append(contentsOf: firstPayload.attrubuteUpdates ?? [])
                             combinedAttributes.append(contentsOf: nextPayload.attrubuteUpdates ?? [])
+                            combinedAttributes.append(contentsOf: nextNextPayload.attrubuteUpdates ?? [])
                             
                             var combinedSubscriptionLists: [ScopedSubscriptionListUpdate] = []
-                            combinedSubscriptionLists.append(contentsOf: firstPayload.subscriptionListsUpdates ?? [])
                             combinedSubscriptionLists.append(contentsOf: nextPayload.subscriptionListsUpdates ?? [])
+                            combinedSubscriptionLists.append(contentsOf: nextNextPayload.subscriptionListsUpdates ?? [])
 
                             operations.removeFirst()
                             next = ContactOperation.update(tagUpdates: combinedTags,
@@ -1215,15 +1222,41 @@ public class Contact : NSObject, Component, ContactProtocol {
             var pendingAttributeUpdates : [AttributeUpdate]?
             
             if let pendingTagGroupsData = self.dataStore.data(forKey: Contact.legacyPendingTagGroupsKey) {
-                if let pendingTagGroups = NSKeyedUnarchiver.unarchiveObject(with: pendingTagGroupsData) as? [TagGroupsMutation] {
-                    pendingTagUpdates = pendingTagGroups.map { $0.tagGroupUpdates }.reduce([], +)
+                
+                let classes = [NSArray.self, TagGroupsMutation.self]
+                let pendingTagGroups = try? NSKeyedUnarchiver.unarchivedObject(
+                    ofClasses: classes,
+                    from: pendingTagGroupsData
+                )
+
+                if let pendingTagGroups = pendingTagGroups
+                    as? [TagGroupsMutation]
+                {
+                    pendingTagUpdates =
+                        pendingTagGroups.map { $0.tagGroupUpdates }
+                        .reduce([], +)
                 }
+                
             }
             
             if let pendingAttributesData = self.dataStore.data(forKey: Contact.legacyPendingAttributesKey) {
-                if let pendingAttributes = NSKeyedUnarchiver.unarchiveObject(with: pendingAttributesData) as? [AttributePendingMutations] {
-                    pendingAttributeUpdates = pendingAttributes.map { $0.attributeUpdates }.reduce([], +)
+                
+                let classes = [NSArray.self, AttributePendingMutations.self]
+                let pendingAttributes = try? NSKeyedUnarchiver.unarchivedObject(
+                    ofClasses: classes,
+                    from: pendingAttributesData
+                )
+
+                if let pendingAttributes = pendingAttributes
+                    as? [AttributePendingMutations]
+                {
+                    pendingAttributeUpdates =
+                        pendingAttributes.map {
+                            $0.attributeUpdates
+                        }
+                        .reduce([], +)
                 }
+                
             }
             
             if (!(pendingTagUpdates?.isEmpty ?? true && pendingAttributeUpdates?.isEmpty ?? true)) {

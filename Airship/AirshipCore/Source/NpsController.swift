@@ -10,20 +10,28 @@ struct NpsController : View {
     let constraints: ViewConstraints
     
     @State var formState: FormState
-    
+
     init(model: NpsControllerModel, constraints: ViewConstraints) {
         self.model = model
         self.constraints = constraints
-        self.formState = FormState(identifier: self.model.identifier,
-                                   formType: .nps(self.model.npsIdentifier),
-                                   formResponseType: self.model.responseType)
+        self.formState = FormState(
+            identifier: self.model.identifier,
+            formType: .nps(self.model.npsIdentifier),
+            formResponseType: self.model.responseType
+        )
     }
     
     var body: some View {
         if (model.submit != nil) {
-            ParentNpsController(model: model, constraints: constraints, formState: formState)
+            ParentNpsController(
+                model: model,
+                constraints: constraints,
+                formState: formState)
         } else {
-            ChildNpsController(model: model, constraints: constraints, formState: formState)
+            ChildNpsController(
+                model: model,
+                constraints: constraints,
+                formState: formState)
         }
     }
 }
@@ -66,8 +74,6 @@ private struct ChildNpsController : View {
     
     @EnvironmentObject var parentFormState: FormState
     @ObservedObject var formState: FormState
-    @State private var dataCancellable: AnyCancellable?
-    @State private var visibleCancellable: AnyCancellable?
     
     var body: some View {
         return ViewFactory.createView(model: self.model.view, constraints: constraints)
@@ -80,16 +86,7 @@ private struct ChildNpsController : View {
             .environmentObject(formState)
             .onAppear {
                 restoreFormState()
-                
-                self.dataCancellable = self.formState.$data.sink { incoming in
-                    self.parentFormState.updateFormInput(incoming)
-                }
-                
-                self.visibleCancellable = self.formState.$isVisible.sink { incoming in
-                    if (incoming) {
-                        parentFormState.markVisible()
-                    }
-                }
+                self.formState.parentFormState = self.parentFormState
             }
     }
 

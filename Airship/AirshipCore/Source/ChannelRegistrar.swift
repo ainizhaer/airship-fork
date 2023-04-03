@@ -90,7 +90,7 @@ public class ChannelRegistrar : NSObject, ChannelRegistrarProtocol {
         set {
             if (newValue != nil) {
                 if let data = try? newValue?.encode() {
-                    self.dataStore.setValue(data, forKey: ChannelRegistrar.lastPayloadKey)
+                    self.dataStore.setObject(data, forKey: ChannelRegistrar.lastPayloadKey)
                 }
             } else {
                 self.dataStore.removeObject(forKey: ChannelRegistrar.lastPayloadKey)
@@ -180,6 +180,10 @@ public class ChannelRegistrar : NSObject, ChannelRegistrarProtocol {
      * - Parameter forcefully: YES to force the registration.
      */
     public func register(forcefully: Bool) {
+        guard self.channelAPIClient.isURLConfigured else {
+            return
+        }
+        
         let options = TaskRequestOptions(
             conflictPolicy: forcefully ? .replace : .keep,
             requiresNetwork: true,
@@ -245,7 +249,7 @@ public class ChannelRegistrar : NSObject, ChannelRegistrarProtocol {
                                task: AirshipTask) {
 
         let minimizedPayload = payload.minimizePayload(previous: lastPayload)
-        let disposable = self.channelAPIClient.updateChannel(withID: channelID, withPayload: minimizedPayload) { response, error in
+        self.channelAPIClient.updateChannel(withID: channelID, withPayload: minimizedPayload) { response, error in
             guard let response = response else {
                 if let error = error {
                     AirshipLogger.error("Failed request with error: \(error)")
@@ -275,14 +279,11 @@ public class ChannelRegistrar : NSObject, ChannelRegistrarProtocol {
                 }
             }
         }
-        
-        task.expirationHandler = {
-            disposable.dispose()
-        }
+
     }
     
     private func createChannel(payload: ChannelRegistrationPayload, task: AirshipTask) {
-        let disposable = self.channelAPIClient.createChannel(withPayload: payload) { response, error in
+        self.channelAPIClient.createChannel(withPayload: payload) { response, error in
             
             guard let response = response else {
                 if let error = error {
@@ -310,10 +311,6 @@ public class ChannelRegistrar : NSObject, ChannelRegistrarProtocol {
                     task.taskCompleted()
                 }
             }
-        }
-        
-        task.expirationHandler = {
-            disposable.dispose()
         }
     }
     

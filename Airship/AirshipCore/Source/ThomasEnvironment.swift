@@ -9,6 +9,17 @@ class ThomasEnvironment : ObservableObject {
     let extensions: ThomasExtensions?
     let imageLoader: ImageLoader;
 
+
+    let defaultFormState = FormState(identifier: "",
+                                     formType: .form,
+                                     formResponseType: "")
+
+    let defaultViewState = ViewState()
+
+    let defaultPagerState = PagerState(identifier: "")
+
+
+
     var isDismissed = false
     @Published
     var focusedID: String? = nil
@@ -33,10 +44,14 @@ class ThomasEnvironment : ObservableObject {
     }
 
     func submitForm(_ formState: FormState, layoutState: LayoutState) {
-        if let formResult = formState.toFormResult() {
-            self.delegate.onFormSubmitted(formResult: formResult,
-                                          layoutContext: layoutState.toLayoutContext())
+        guard !formState.isSubmitted else {
+            return
         }
+        
+        self.delegate.onFormSubmitted(
+            formResult: formState.toFormResult(),
+            layoutContext: layoutState.toLayoutContext()
+        )
 
         let channelEditor = Airship.channel.editAttributes()
         let contactEditor = Airship.contact.editAttributes()
@@ -194,12 +209,11 @@ private extension FormState {
         }
     }
 
-    func toFormResult() -> ThomasFormResult? {
-        if let data = self.data.toPayload() {
-            return ThomasFormResult(identifier: self.identifier,
-                                    formData: data)
-        }
-        return nil
+    func toFormResult() -> ThomasFormResult {
+        return ThomasFormResult(
+            identifier: self.identifier,
+            formData: self.data.toPayload() ?? [:]
+        )
     }
 }
 

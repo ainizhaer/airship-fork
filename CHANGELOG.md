@@ -3,6 +3,63 @@
 
 [Migration Guides](https://github.com/urbanairship/ios-library/tree/main/Documentation/Migration)
 
+## Version 16.11.3 March 24, 2023
+Patch release that fixing Contact update merging order, improves Scene/Survey accessibility and reporting.
+
+### Changes
+- Fixed Contact update merge order, resolving a Preference Center bug that could lead to unexpected subscription states in some circumstances.
+- Improved Scene/Survey accessibility and fixed a reporting bug related to form display events.
+- Fixed an issue with downgrading to a version older than 16.10.1 would cause the channel to be recreated.
+- Added support for transparent WebView backgrounds in HTML In-App Automations
+
+## Version 16.11.2 March 2, 2023
+Patch release that fixes a regression introduced in 16.11.0 that disables Survey's submit button and inputs, and added accessibility font scaling to Scenes & Surveys.
+
+### Changes
+- Scale fonts for Scenes & Surveys
+- Fixed Survey enablement regression
+
+## Version 16.11.1 February 28, 2023
+Patch release that exposes some Preference Center classes to Objective-C.
+
+### Changes
+- Exposes `UAPreferenceCenterResources`, `UAPreferenceCenterViewController` and `UAPreferenceAlertItemButton`to obj-c.
+
+## Version 16.11.0 February 22, 2023
+Minor release that fixes a potential channel restore issue on second run. The impact should be small since the channel create will return the same channel ID if the app has a device token or the app installed the Message Center module. 
+
+### Changes
+- Fixed app restore detection false positive on second run
+- Added new optional `PushNotificationDelegate` method `extendPresentationOptions(_:notification:completionHandler)` that allows returning foreground presentation options with a callback instead of synchronously
+- Added new `Config` method `validate(logIssues:)` to prevent logging on the config.
+- Fixed nil URL log message when attempting to create a channel on the first run. The channel will now wait until the URL is available before attempting to be created. This should not cause any real difference in behavior, it only prevents the log message from being logged.
+- Fixed Xcode 14.3 beta build issues
+
+## Version 16.10.7 January 17, 2023
+Patch release that adds a potential mitigation for some iOS 16 devices crashing when reading and writing to UserDefaults. We have not been able to reproduce the issue and seems limited to a small number of iOS 16 devices.
+
+### Changes
+- Added potential mitigation for a UserDefaults crash that is occurring on some iOS 16 devices.
+- Specify the classes when using `'NSKeyedUnarchiver`.
+
+## Version 16.10.6 December 5, 2022
+Patch release that fixes Airship not performing network operations until next app foreground when triggered in the background.
+
+### Changes
+- Fixed background initiated operations.
+
+## Version 16.10.5 November 30, 2022
+Patch release with several fixes for Message Center, attributes, 
+and In-App Automation.
+
+### Changes
+- Fixed issue with setting attributes to `0` or `1`.
+- Fixed message getters in the JS native bridge when using Message Center.
+- Updated the window levels to normal for IAA, Preference Center, and Message Center. This avoid conflicts with full screen video and other alert level windows.
+- Fixed share action dialog from closing when an IAA is dismissed.
+
+
+
 ## Version 16.10.4 November 22, 2022
 Patch release that fixes a regression with Scenes and Surveys next page button enablement. Apps on 16.10.1-16.10.3 that use Scenes & Surveys should update.
 

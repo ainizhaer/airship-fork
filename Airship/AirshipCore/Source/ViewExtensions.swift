@@ -32,15 +32,27 @@ extension View {
         self
         #else
         self.simultaneousGesture(TapGesture().onEnded(action))
+            .accessibilityAction(.default) {
+                action()
+            }
         #endif
     }
 
     @ViewBuilder
-    func accessible(_ accessible: Accessible?) -> some View {
+    func accessibleHiddenCompat(hidden: Bool) -> some View {
+        if #available(iOS 14.0, tvOS 14.0, *) {
+            self.accessibilityHidden(hidden)
+        } else {
+            self.accessibility(hidden: hidden)
+        }
+    }
+
+    @ViewBuilder
+    func accessible(_ accessible: Accessible?, hideIfNotSet: Bool = false) -> some View {
         if let label = accessible?.contentDescription {
             self.accessibility(label: Text(label))
         } else {
-            self
+            self.accessibleHiddenCompat(hidden: hideIfNotSet)
         }
     }
 

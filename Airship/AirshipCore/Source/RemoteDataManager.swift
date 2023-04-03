@@ -69,7 +69,7 @@ public class RemoteDataManager : NSObject, Component, RemoteDataProvider {
             return self.dataStore.object(forKey: RemoteDataManager.lastRefreshTimeKey) as? Date ?? Date.distantPast
         }
         set {
-            self.dataStore.setValue(newValue, forKey: RemoteDataManager.lastRefreshTimeKey)
+            self.dataStore.setObject(newValue, forKey: RemoteDataManager.lastRefreshTimeKey)
         }
     }
     
@@ -78,7 +78,7 @@ public class RemoteDataManager : NSObject, Component, RemoteDataProvider {
             return self.dataStore.string(forKey: RemoteDataManager.lastRefreshAppVersionKey)
         }
         set {
-            self.dataStore.setValue(newValue, forKey: RemoteDataManager.lastRefreshAppVersionKey)
+            self.dataStore.setObject(newValue, forKey: RemoteDataManager.lastRefreshAppVersionKey)
         }
     }
     
@@ -217,7 +217,7 @@ public class RemoteDataManager : NSObject, Component, RemoteDataProvider {
 
         var success = false
 
-        let request = self.apiClient.fetchRemoteData(locale: locale, randomValue: self.randomValue, lastModified: lastModified) { response, error in
+        self.apiClient.fetchRemoteData(locale: locale, randomValue: self.randomValue, lastModified: lastModified) { response, error in
             guard let response = response else {
                 if let error = error {
                     AirshipLogger.error("Failed to refresh remote-data with error \(error)")
@@ -233,7 +233,9 @@ public class RemoteDataManager : NSObject, Component, RemoteDataProvider {
             AirshipLogger.trace("Remote data refresh finished with payloads: \(response.payloads ?? [])")
 
             if (response.status == 304) {
-                self.updatedSinceLastForeground = true
+                self.refreshLock.sync {
+                    self.updatedSinceLastForeground = true
+                }
                 self.lastRefreshTime = self.date.now
                 self.lastAppVersion = Utils.bundleShortVersionString()
                 success = true
@@ -265,10 +267,6 @@ public class RemoteDataManager : NSObject, Component, RemoteDataProvider {
                     task.taskCompleted()
                 }
             }
-        }
-        
-        task.expirationHandler = {
-            request.dispose()
         }
 
         task.completionHandler = {
