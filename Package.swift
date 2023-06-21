@@ -197,8 +197,7 @@ let package = Package(
                           "Info.plist",
                           "Tests"],
                 sources : ["Source"],
-                resources: [
-                    .process("Resources")]
+                resources: []
         )
     ]
 )
