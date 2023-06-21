@@ -196,11 +196,9 @@ NSString *const UAInAppMessageDisplayCoordinatorIsReadyKey = @"isReady";
     } forDisplayType:UAInAppMessageDisplayTypeHTML];
     
     // Airship Layout
-    if (@available(iOS 13.0, *)) {
-        [self setFactoryBlock:^id<UAInAppMessageAdapterProtocol> _Nonnull(UAInAppMessage * _Nonnull message) {
-            return [UAInAppMessageAirshipLayoutAdapter adapterForMessage:message];
-        } forDisplayType:UAInAppMessageDisplayTypeAirshipLayout];
-    }
+    [self setFactoryBlock:^id<UAInAppMessageAdapterProtocol> _Nonnull(UAInAppMessage * _Nonnull message) {
+        return [UAInAppMessageAirshipLayoutAdapter adapterForMessage:message];
+    } forDisplayType:UAInAppMessageDisplayTypeAirshipLayout];
 }
 
 - (void)setFactoryBlock:(id<UAInAppMessageAdapterProtocol> (^)(UAInAppMessage* message))factory
@@ -470,10 +468,9 @@ NSString *const UAInAppMessageDisplayCoordinatorIsReadyKey = @"isReady";
         }
 
         if (message.actions) {
-            [UAActionRunner runActionsWithActionValues:message.actions
-                                             situation:UASituationManualInvocation
-                                              metadata:nil
-                                     completionHandler:^(UAActionResult *result) {
+            [UAActionRunner runActions:message.actions
+                      situation:UAActionSituationManualInvocation
+              completionHandler:^{
                 UA_LTRACE(@"Finished running actions for schedule %@", scheduleID);
             }];
         }

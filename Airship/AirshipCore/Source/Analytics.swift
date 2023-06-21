@@ -1,43 +1,18 @@
 /* Copyright Airship and Contributors */
 
+import Combine
 import Foundation
-
-/// Allowed SDK extension types.
-/// - Note: For internal use only. :nodoc:
-@objc(UASDKExtension)
-public enum SDKExtension : Int {
-    /// The Cordova SDK extension.
-    case cordova = 0
-    /// The Xamarin SDK extension.
-    case xamarin = 1
-    /// The Unity SDK extension.
-    case unity = 2
-    /// The Flutter SDK extension.
-    case flutter = 3
-    /// The React Native SDK extension.
-    case reactNative = 4
-    /// The Titanium SDK extension.
-    case titanium = 5
-}
 
 /// The Analytics object provides an interface to the Airship Analytics API.
 @objc(UAAnalytics)
-public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDelegate {
-    
-    /**
-     * Analytics supplier, for testing purposes. :nodoc:
-     */
-    @objc
-    public static let supplier: () -> AnalyticsProtocol = {
-        return Airship.requireComponent(ofType: AnalyticsProtocol.self)
-    }
-    
+public final class AirshipAnalytics: NSObject, AirshipComponent, AnalyticsProtocol, @unchecked Sendable {
+
     /// The shared Analytics instance.
     @objc
-    public static var shared: Analytics {
+    public static var shared: AirshipAnalytics {
         return Airship.analytics
     }
-    
+
     private static let associatedIdentifiers = "UAAssociatedIdentifiers"
     private static let missingSendID = "MISSING_SEND_ID"
     private static let pushMetadata = "com.urbanairship.metadata"
@@ -52,99 +27,95 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
 
     /// Custom event added notification. :nodoc:
     @objc
-    public static let customEventAdded = NSNotification.Name("UACustomEventAdded")
+    public static let customEventAdded = NSNotification.Name(
+        "UACustomEventAdded"
+    )
 
     /// Region event added notification. :nodoc:
     @objc
-    public static let regionEventAdded = NSNotification.Name("UARegionEventAdded")
+    public static let regionEventAdded = NSNotification.Name(
+        "UARegionEventAdded"
+    )
 
     /// Screen tracked notification,. :nodoc:
     @objc
     public static let screenTracked = NSNotification.Name("UAScreenTracked")
 
-    private var config: RuntimeConfig
-    private var dataStore: PreferenceDataStore
-    private var channel: ChannelProtocol
-    private var eventManager: EventManagerProtocol
-    private var privacyManager: PrivacyManager
-    private var notificationCenter: NotificationCenter
-    private var date: AirshipDate
-    private var dispatcher: UADispatcher
-    private var sdkExtensions: [String]
-    private var headerBlocks: [(() -> [String : String]?)]
-    private var localeManager: LocaleManagerProtocol
-    private var appStateTracker: AppStateTrackerProtocol
-    private var handledFirstForegroundTransition = false
-    private var permissionsManager: PermissionsManager
+    private let config: RuntimeConfig
+    private let dataStore: PreferenceDataStore
+    private let channel: AirshipChannelProtocol
+    private let privacyManager: AirshipPrivacyManager
+    private let notificationCenter: AirshipNotificationCenter
+    private let date: AirshipDateProtocol
+    private let eventManager: EventManagerProtocol
+    private let localeManager: AirshipLocaleManagerProtocol
+    private let appStateTracker: AppStateTrackerProtocol
+    private let permissionsManager: AirshipPermissionsManager
+    private let disableHelper: ComponentDisableHelper
+    private let lifeCycleEventFactory: LifeCycleEventFactoryProtocol
+    private let serialQueue: AsyncSerialQueue = AsyncSerialQueue()
+
+    private let sdkExtensions: Atomic<[String]> = Atomic([])
 
     // Screen tracking state
     private var currentScreen: String?
     private var previousScreen: String?
-    private var startTime: TimeInterval = 0.0
+    private var screenStartDate: Date?
 
-    private let lock = Lock()
     private var initialized = false
     private var isAirshipReady = false
+    private var handledFirstForegroundTransition = false
+    private let lock = AirshipLock()
 
-    private var isAnalyticsEnabled: Bool {
-        get {
-            return self.isComponentEnabled && self.config.isAnalyticsEnabled && self.privacyManager.isEnabled(.analytics)
-        }
-    }
-    
     private var _conversionSendID : String? = nil
-    
+       
     /// The conversion send ID. :nodoc:
-    @objc
-    public var conversionSendID: String? {
-        get {
-            var result: String? = nil
-            lock.sync {
-                result = self._conversionSendID
-            }
-            return result
-        }
-        set {
-            lock.sync {
-                self._conversionSendID = newValue
-            }
-        }
+   @objc
+   public var conversionSendID: String? {
+       get {
+           var result: String? = nil
+           lock.sync {
+               result = self._conversionSendID
+           }
+           return result
+       }
+       set {
+           lock.sync {
+               self._conversionSendID = newValue
+           }
+       }
     }
 
-    private var _conversionPushMetadata : String? = nil
-    
-    /// The conversion push metadata. :nodoc:
-    @objc
-    public var conversionPushMetadata: String? {
-        get {
-            var result: String? = nil
-            lock.sync {
-                result = self._conversionPushMetadata
-            }
-            return result
-        }
-        set {
-            lock.sync {
-                self._conversionPushMetadata = newValue
-            }
-        }
-    }
+   private var _conversionPushMetadata : String? = nil
+   
+   /// The conversion push metadata. :nodoc:
+   @objc
+   public var conversionPushMetadata: String? {
+       get {
+           var result: String? = nil
+           lock.sync {
+               result = self._conversionPushMetadata
+           }
+           return result
+       }
+       set {
+           lock.sync {
+               self._conversionPushMetadata = newValue
+           }
+       }
+   }
 
     /// The current session ID.
     @objc
     public private(set) var sessionID: String?
 
-    /// Optional event consumer.
-    ///
-    /// - Note: AirshipDebug uses the event consumer to capture events. Setting the event
-    /// consumer for other purposes will result in an interruption to AirshipDebug's event stream.
-    ///
-    /// For internal use only. :nodoc:
-    @objc
-    public var eventConsumer: AnalyticsEventConsumerProtocol?
+    private let eventSubject = PassthroughSubject<AirshipEventData, Never>()
 
-    private let disableHelper: ComponentDisableHelper
-        
+    /// Airship event publisher
+    public var eventPublisher: AnyPublisher<AirshipEventData, Never> {
+        eventSubject.eraseToAnyPublisher()
+    }
+
     // NOTE: For internal use only. :nodoc:
     public var isComponentEnabled: Bool {
         get {
@@ -155,129 +126,124 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
         }
     }
 
-    /// Factory method to create an analytics instance.
-    /// - Note: For internal use only. :nodoc:
-    /// - Parameters:
-    ///   - config: The runtime config.
-    ///   - dataStore: The shared preference data store.
-    ///   - channel: The channel instance.
-    ///   - localeManager: A UALocaleManager.
-    ///   - privacyManager: A PrivacyManager.
-    ///   - permissionsManager: The permissions manager.
-    /// - Returns: A new analytics instance.
-    @objc
-    public convenience init(
-        config: RuntimeConfig,
-        dataStore: PreferenceDataStore,
-        channel: ChannelProtocol,
-        localeManager: LocaleManagerProtocol,
-        privacyManager: PrivacyManager,
-        permissionsManager: PermissionsManager
-    ) {
-        self.init(config: config,
-                  dataStore: dataStore,
-                  channel: channel,
-                  eventManager: EventManager(config: config, dataStore: dataStore, channel: channel),
-                  notificationCenter: NotificationCenter.default,
-                  date: AirshipDate(),
-                  dispatcher: UADispatcher.main,
-                  localeManager: localeManager,
-                  appStateTracker: AppStateTracker.shared,
-                  privacyManager: privacyManager,
-                  permissionsManager: permissionsManager)
+    private var isAnalyticsEnabled: Bool {
+        return self.privacyManager.isEnabled(.analytics) &&
+        self.config.isAnalyticsEnabled &&
+        self.isComponentEnabled
     }
 
-    /// Factory method to create an analytics instance. Used for testing.
-    /// - Note: For internal use only. :nodoc:
-    /// - Parameters:
-    ///   - config: The runtime config.
-    ///   - dataStore: The shared preference data store.
-    ///   - channel: The channel instance.
-    ///   - eventManager: The event manager.
-    ///   - notificationCenter: The notification center.
-    ///   - date: A DateUtils instance.
-    ///   - dispatcher: The dispatcher.
-    ///   - localeManager: The locale manager.
-    ///   - appStateTracker: The app state tracker.
-    ///   - privacyManager: The privacy manager.
-    ///   - permissionsManager: The permissions manager.
-    /// - Returns: A new analytics instance.
-    @objc
-    public init(
+    convenience init(
         config: RuntimeConfig,
         dataStore: PreferenceDataStore,
-        channel: ChannelProtocol,
+        channel: AirshipChannelProtocol,
+        localeManager: AirshipLocaleManagerProtocol,
+        privacyManager: AirshipPrivacyManager,
+        permissionsManager: AirshipPermissionsManager
+    ) {
+        self.init(
+            config: config,
+            dataStore: dataStore,
+            channel: channel,
+            localeManager: localeManager,
+            privacyManager: privacyManager,
+            permissionsManager: permissionsManager,
+            eventManager: EventManager(
+                config: config,
+                dataStore: dataStore,
+                channel: channel
+            )
+        )
+    }
+
+    init(
+        config: RuntimeConfig,
+        dataStore: PreferenceDataStore,
+        channel: AirshipChannelProtocol,
+        notificationCenter: AirshipNotificationCenter = AirshipNotificationCenter.shared,
+        date: AirshipDateProtocol = AirshipDate.shared,
+        localeManager: AirshipLocaleManagerProtocol,
+        appStateTracker: AppStateTrackerProtocol = AppStateTracker.shared,
+        privacyManager: AirshipPrivacyManager,
+        permissionsManager: AirshipPermissionsManager,
         eventManager: EventManagerProtocol,
-        notificationCenter: NotificationCenter,
-        date: AirshipDate,
-        dispatcher: UADispatcher,
-        localeManager: LocaleManagerProtocol,
-        appStateTracker: AppStateTrackerProtocol,
-        privacyManager: PrivacyManager,
-        permissionsManager: PermissionsManager
+        lifeCycleEventFactory: LifeCycleEventFactoryProtocol = LifeCylceEventFactory()
     ) {
         self.config = config
         self.dataStore = dataStore
         self.channel = channel
-        self.eventManager = eventManager
         self.notificationCenter = notificationCenter
         self.date = date
-        self.dispatcher = dispatcher
         self.localeManager = localeManager
         self.privacyManager = privacyManager
         self.appStateTracker = appStateTracker
         self.permissionsManager = permissionsManager
+        self.eventManager = eventManager
+        self.lifeCycleEventFactory = lifeCycleEventFactory
 
-        self.sdkExtensions = []
-        self.headerBlocks = []
-
-        self.disableHelper = ComponentDisableHelper(dataStore: dataStore, className: "UAAnalytics")
+        self.disableHelper = ComponentDisableHelper(
+            dataStore: dataStore,
+            className: "UAAnalytics"
+        )
 
         super.init()
-        
-        self.disableHelper.onChange = { [weak self] in
-            self?.onComponentEnableChange()
-        }
-        
-        self.eventManager.delegate = self
 
-        updateEventManagerUploadsEnabled()
+        self.disableHelper.onChange = { [weak self] in
+            self?.updateEnablement()
+        }
+
+        self.eventManager.addHeaderProvider {
+            await self.makeHeaders()
+        }
+
         startSession()
 
         self.notificationCenter.addObserver(
             self,
             selector: #selector(applicationDidTransitionToForeground),
             name: AppStateTracker.didTransitionToForeground,
-            object: nil)
+            object: nil
+        )
 
         self.notificationCenter.addObserver(
             self,
             selector: #selector(applicationWillEnterForeground),
             name: AppStateTracker.willEnterForegroundNotification,
-            object: nil)
+            object: nil
+        )
 
         self.notificationCenter.addObserver(
             self,
             selector: #selector(applicationDidEnterBackground),
             name: AppStateTracker.didEnterBackgroundNotification,
-            object: nil)
+            object: nil
+        )
 
         self.notificationCenter.addObserver(
             self,
             selector: #selector(applicationWillTerminate),
             name: AppStateTracker.willTerminateNotification,
-            object: nil)
+            object: nil
+        )
 
         self.notificationCenter.addObserver(
             self,
-            selector: #selector(onEnabledFeaturesChanged),
-            name: PrivacyManager.changeEvent,
-            object: nil)
+            selector: #selector(updateEnablement),
+            name: AirshipPrivacyManager.changeEvent,
+            object: nil
+        )
+
+        self.notificationCenter.addObserver(
+            self,
+            selector: #selector(updateEnablement),
+            name: AirshipChannel.channelCreatedEvent,
+            object: nil
+        )
     }
 
     // MARK: -
     // MARK: Application State
     @objc
+    @MainActor
     private func applicationDidTransitionToForeground() {
         AirshipLogger.debug("Application transitioned to foreground.")
 
@@ -287,12 +253,12 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
             ensureInit()
             return
         }
-        
+
         // Otherwise start a new session and emit a foreground event.
         startSession()
 
         // Add app_foreground event
-        self.addEvent(AppForegroundEvent())
+        self.addLifeCycleEvent(.foreground)
     }
 
     @objc
@@ -304,16 +270,17 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
     }
 
     @objc
+    @MainActor
     private func applicationDidEnterBackground() {
         AirshipLogger.debug("Application did enter background.")
 
-        stopTrackingScreen()
+        self.trackScreen(nil)
 
         // Ensure an app init event
         ensureInit()
-        
+
         // Add app_background event
-        self.addEvent(AppBackgroundEvent())
+        self.addLifeCycleEvent(.background)
 
         startSession()
         conversionSendID = nil
@@ -323,40 +290,43 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
     @objc
     private func applicationWillTerminate() {
         AirshipLogger.debug("Application is terminating.")
-        stopTrackingScreen()
+        self.trackScreen(nil)
     }
+
 
     // MARK: -
     // MARK: Analytics Headers
 
     /// :nodoc:
-    @objc(addAnalyticsHeadersBlock:)
-    public func add(_ headerBlock: @escaping () -> [String : String]?) {
-        self.headerBlocks.append(headerBlock)
+    public func addHeaderProvider(
+        _ headerProvider: @Sendable @escaping () async -> [String: String]
+    ) {
+        self.eventManager.addHeaderProvider(headerProvider)
     }
 
-    /// :nodoc:
-    @objc
-    public func analyticsHeaders(completionHandler: @escaping ([String : String]) -> Void) {
-        var headers: [String : String] = [:]
+    private func makeHeaders() async -> [String: String] {
+        var headers: [String: String] = [:]
 
         // Device info
         #if !os(watchOS)
-        headers["X-UA-Device-Family"] = UIDevice.current.systemName
-        headers["X-UA-OS-Version"] = UIDevice.current.systemVersion
+        headers["X-UA-Device-Family"] = await UIDevice.current.systemName
+        headers["X-UA-OS-Version"] = await UIDevice.current.systemVersion
         #else
-        headers["X-UA-Device-Family"] = WKInterfaceDevice.current().systemName
-        headers["X-UA-OS-Version"] = WKInterfaceDevice.current().systemVersion
+        headers["X-UA-Device-Family"] =
+            WKInterfaceDevice.current().systemName
+        headers["X-UA-OS-Version"] =
+            WKInterfaceDevice.current().systemVersion
         #endif
-        
-        headers["X-UA-Device-Model"] = Utils.deviceModelName()
+
+        headers["X-UA-Device-Model"] = AirshipUtils.deviceModelName()
 
         // App info
-        if let infoDictionary  = Bundle.main.infoDictionary {
-            headers["X-UA-Package-Name"] = infoDictionary[kCFBundleIdentifierKey as String] as? String
+        if let infoDictionary = Bundle.main.infoDictionary {
+            headers["X-UA-Package-Name"] =
+                infoDictionary[kCFBundleIdentifierKey as String] as? String
         }
 
-        headers["X-UA-Package-Version"] = Utils.bundleShortVersionString() ?? ""
+        headers["X-UA-Package-Version"] = AirshipUtils.bundleShortVersionString() ?? ""
 
         // Time zone
         let currentLocale = self.localeManager.currentLocale
@@ -373,32 +343,20 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
         headers["X-UA-Lib-Version"] = AirshipVersion.get()
 
         // SDK Extensions
-        if self.sdkExtensions.count > 0 {
-            headers["X-UA-Frameworks"] = self.sdkExtensions.joined(separator: ", ")
+        let extensions = self.sdkExtensions.value
+        if extensions.count > 0 {
+            headers["X-UA-Frameworks"] = extensions.joined(
+                separator: ", "
+            )
         }
 
-        // Header extenders
-        for block in self.headerBlocks {
-            if let result = block() {
-                headers.merge(result, uniquingKeysWith: { (current, _) in current })
-            }
+        // Permissions
+        for permission in self.permissionsManager.configuredPermissions {
+            let status = await self.permissionsManager.checkPermissionStatus(permission)
+            headers["X-UA-Permission-\(permission.stringValue)"] = status.stringValue
         }
 
-        let group = DispatchGroup()
-        group.enter()
-
-        self.permissionsManager.configuredPermissions.forEach { permission in
-            group.enter()
-            self.permissionsManager.checkPermissionStatus(permission) { status in
-                headers["X-UA-Permission-\(permission.stringValue)"] = status.stringValue
-                group.leave()
-            }
-        }
-
-        group.leave()
-        group.notify(queue: DispatchQueue.global()) {
-            completionHandler(headers);
-        }
+        return headers
     }
 
     // MARK: -
@@ -407,9 +365,11 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
     /// Triggers an analytics event.
     /// - Parameter event: The event to be triggered
     @objc
-    public func addEvent(_ event: Event) {
-        guard event.isValid?() != false else {
-            AirshipLogger.error("Dropping invalid event: \(event)")
+    public func addEvent(_ event: AirshipEvent) {
+        guard self.isAnalyticsEnabled else {
+            AirshipLogger.trace(
+                "Analytics disabled, ignoring event: \(event.eventType)"
+            )
             return
         }
 
@@ -417,34 +377,55 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
             AirshipLogger.error("Missing session ID")
             return
         }
+        
+        guard
+            event.isValid?() != false,
+            let body = try? AirshipJSON.wrap(event.data as? [String: Any])
+        else {
+            AirshipLogger.error("Dropping invalid event: \(event)")
+            return
+        }
+        
+        let eventData = AirshipEventData(
+            body: body,
+            id: NSUUID().uuidString,
+            date: Date(),
+            sessionID: sessionID,
+            type: event.eventType
+        )
 
-        let date = Date();
-        let identifier = NSUUID().uuidString
+        if let customEvent = event as? CustomEvent {
+            self.notificationCenter.post(
+                name: AirshipAnalytics.customEventAdded,
+                object: self,
+                userInfo: [AirshipAnalytics.eventKey: customEvent]
+            )
+        }
 
-        self.dispatcher.dispatchAsync { [weak self] in
-            guard let self = self else {
-                return
-            }
+        if let regionEvent = event as? RegionEvent {
+            self.notificationCenter.post(
+                name: AirshipAnalytics.regionEventAdded,
+                object: self,
+                userInfo: [AirshipAnalytics.eventKey: regionEvent]
+            )
+        }
 
+        self.serialQueue.enqueue {
             guard self.isAnalyticsEnabled else {
-                AirshipLogger.trace("Analytics disabled, ignoring event: \(event.eventType)")
                 return
             }
 
-            AirshipLogger.debug("Adding \(event.eventType) event \(identifier)")
-            self.eventManager.add(event, eventID: identifier, eventDate: date, sessionID: sessionID)
-            AirshipLogger.trace("Event added: \(event)")
-
-            if let eventConsumer = self.eventConsumer {
-                eventConsumer.eventAdded(event: event, eventID: identifier, eventDate: date)
-            }
-
-            if let customEvent = event as? CustomEvent {
-                self.notificationCenter.post(name: Analytics.customEventAdded, object: self, userInfo: [Analytics.eventKey : customEvent])
-            }
-
-            if let regionEvent = event as? RegionEvent {
-                self.notificationCenter.post(name: Analytics.regionEventAdded, object: self, userInfo: [Analytics.eventKey : regionEvent])
+            do {
+                AirshipLogger.debug("Adding event with type \(eventData.type)")
+                AirshipLogger.trace("Adding event \(eventData)")
+                try await self.eventManager.addEvent(eventData)
+                self.eventSubject.send(eventData)
+                await self.eventManager.scheduleUpload(
+                    eventPriority: event.priority
+                )
+            } catch {
+                AirshipLogger.error("Failed to save event \(error)")
+                return
             }
         }
     }
@@ -457,22 +438,35 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
     ///
     /// - Parameter associatedIdentifiers: The associated identifiers.
     @objc
-    public func associateDeviceIdentifiers(_ associatedIdentifiers: AssociatedIdentifiers) {
+    public func associateDeviceIdentifiers(
+        _ associatedIdentifiers: AssociatedIdentifiers
+    ) {
         guard self.isAnalyticsEnabled else {
-            AirshipLogger.warn("Unable to associate identifiers \(associatedIdentifiers.allIDs) when analytics is disabled")
+            AirshipLogger.warn(
+                "Unable to associate identifiers \(associatedIdentifiers.allIDs) when analytics is disabled"
+            )
             return
         }
 
-        if let previous = self.dataStore.object(forKey: Analytics.associatedIdentifiers) as? [String : String] {
+        if let previous = self.dataStore.object(
+            forKey: AirshipAnalytics.associatedIdentifiers
+        ) as? [String: String] {
             if previous == associatedIdentifiers.allIDs {
-                AirshipLogger.info("Skipping analytics event addition for duplicate associated identifiers.")
+                AirshipLogger.info(
+                    "Skipping analytics event addition for duplicate associated identifiers."
+                )
                 return
             }
         }
 
-        self.dataStore.setObject(associatedIdentifiers.allIDs, forKey: Analytics.associatedIdentifiers)
+        self.dataStore.setObject(
+            associatedIdentifiers.allIDs,
+            forKey: AirshipAnalytics.associatedIdentifiers
+        )
 
-        if let event = AssociateIdentifiersEvent(identifiers: associatedIdentifiers) {
+        if let event = AssociateIdentifiersEvent(
+            identifiers: associatedIdentifiers
+        ) {
             self.addEvent(event)
         }
     }
@@ -481,26 +475,46 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
     /// - Returns: The device's current associated identifiers.
     @objc
     public func currentAssociatedDeviceIdentifiers() -> AssociatedIdentifiers {
-        let storedIDs = self.dataStore.object(forKey: Analytics.associatedIdentifiers) as? [String : String]
-        return AssociatedIdentifiers(dictionary: storedIDs != nil ? storedIDs : [:])
+        let storedIDs =
+            self.dataStore.object(forKey: AirshipAnalytics.associatedIdentifiers)
+            as? [String: String]
+        return AssociatedIdentifiers(
+            dictionary: storedIDs != nil ? storedIDs : [:]
+        )
     }
 
     /// Initiates screen tracking for a specific app screen, must be called once per tracked screen.
     /// - Parameter screen: The screen's identifier.
     @objc
     public func trackScreen(_ screen: String?) {
-        self.dispatcher.dispatchAsyncIfNecessary {
+        let date = self.date.now
+        Task { @MainActor in
             // Prevent duplicate calls to track same screen
             guard screen != self.currentScreen else {
-                return;
+                return
             }
 
-            self.notificationCenter.post(name: Analytics.screenTracked, object: self, userInfo: screen == nil ? [:] : [Analytics.screenKey : screen!])
+            self.notificationCenter.post(
+                name: AirshipAnalytics.screenTracked,
+                object: self,
+                userInfo: screen == nil ? [:] : [AirshipAnalytics.screenKey: screen!]
+            )
 
             // If there's a screen currently being tracked set it's stop time and add it to analytics
-            if let currentScreen = self.currentScreen {
-                guard let ste = ScreenTrackingEvent(screen: currentScreen, previousScreen: self.previousScreen, startTime: self.startTime, stopTime: self.date.now.timeIntervalSince1970) else {
-                    AirshipLogger.error("Unable to create screen tracking event")
+            if let currentScreen = self.currentScreen,
+               let screenStartDate = self.screenStartDate {
+
+                guard
+                    let ste = ScreenTrackingEvent(
+                        screen: currentScreen,
+                        previousScreen: self.previousScreen,
+                        startDate: screenStartDate,
+                        duration: date.timeIntervalSince(screenStartDate)
+                    )
+                else {
+                    AirshipLogger.error(
+                        "Unable to create screen tracking event"
+                    )
                     return
                 }
 
@@ -512,14 +526,8 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
             }
 
             self.currentScreen = screen
-            self.startTime = self.date.now.timeIntervalSince1970
+            self.screenStartDate = date
         }
-    }
-
-    /// Schedules an event upload if one is not already scheduled.
-    @objc
-    public func scheduleUpload() {
-        self.eventManager.scheduleUpload()
     }
 
     /// Registers an SDK extension with the analytics module.
@@ -529,21 +537,85 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
     ///   - ext: The SDK extension.
     ///   - version: The version.
     @objc
-    public func registerSDKExtension(_ ext: SDKExtension, version: String) {
+    public func registerSDKExtension(
+        _ ext: AirshipSDKExtension,
+        version: String
+    ) {
         let sanitizedVersion = version.replacingOccurrences(of: ",", with: "")
-        let name = self.nameForSDKExtension(ext)
-        self.sdkExtensions.append("\(name):\(sanitizedVersion)")
+        self.sdkExtensions.value.append("\(ext.name):\(sanitizedVersion)")
     }
 
+    @objc
+    private func updateEnablement() {
+        guard self.isAnalyticsEnabled else {
+            self.eventManager.uploadsEnabled = false
+            Task {
+                do {
+                    try await self.eventManager.deleteEvents()
+                } catch {
+                    AirshipLogger.error("Failed to delete events \(error)")
+                }
+            }
+            return
+        }
+
+        let uploadsEnabled = self.isAirshipReady && self.channel.identifier != nil
+
+
+        if (self.eventManager.uploadsEnabled != uploadsEnabled) {
+            self.eventManager.uploadsEnabled = uploadsEnabled
+
+            if (uploadsEnabled) {
+                Task {
+                    await self.eventManager.scheduleUpload(
+                        eventPriority: .normal
+                    )
+                }
+            }
+        }
+    }
+
+    private func startSession() {
+        self.sessionID = NSUUID().uuidString
+    }
+
+    /// needed to ensure AppInit event gets added
+    /// since App Clips get launched via Push Notification delegate
+    @MainActor
+    private func ensureInit() {
+        if !self.initialized && self.isAirshipReady {
+            self.addLifeCycleEvent(.appInit)
+            self.initialized = true
+        }
+    }
+
+    @MainActor
+    public func airshipReady() {
+        self.isAirshipReady = true
+
+        // If analytics is initialized in the background state, we are responding to a
+        // content-available push. If it's initialized in the foreground state takeOff
+        // was probably called late. We should ensure an init event in either case.
+        if self.appStateTracker.state != .inactive {
+            ensureInit()
+        }
+
+        self.updateEnablement()
+    }
+}
+
+extension AirshipAnalytics: InternalAnalyticsProtocol {
     /// Called to notify analytics the app was launched from a push notification.
     /// For internal use only. :nodoc:
     /// - Parameter notification: The push notification.
-    @objc
-    public func launched(fromNotification notification: [AnyHashable : Any]) {
-        if Utils.isAlertingPush(notification) {
+    @MainActor
+    func launched(fromNotification notification: [AnyHashable: Any]) {
+        if AirshipUtils.isAlertingPush(notification) {
             let sendID = notification["_"] as? String
-            self.conversionSendID = sendID != nil ? sendID : Analytics.missingSendID
-            self.conversionPushMetadata = notification[Analytics.pushMetadata] as? String
+            self.conversionSendID =
+            sendID != nil ? sendID : AirshipAnalytics.missingSendID
+            self.conversionPushMetadata =
+            notification[AirshipAnalytics.pushMetadata] as? String
             self.ensureInit()
         } else {
             self.conversionSendID = nil
@@ -551,102 +623,78 @@ public class Analytics: NSObject, Component, AnalyticsProtocol, EventManagerDele
         }
     }
 
-    private func onComponentEnableChange() {
-        self.updateEventManagerUploadsEnabled()
-    }
-
-    @objc
-    private func onEnabledFeaturesChanged() {
-        self.updateEventManagerUploadsEnabled();
-    }
-
-    private func nameForSDKExtension(_ ext: SDKExtension) -> String {
-        switch (ext) {
-        case .cordova:
-            return "cordova"
-        case .xamarin:
-            return "xamarin"
-        case .unity:
-            return "unity"
-        case .flutter:
-            return "flutter"
-        case .reactNative:
-            return "react-native"
-        case .titanium:
-            return "titanium"
-        default:
-            return ""
+    func onDeviceRegistration(token: String) {
+        guard privacyManager.isEnabled(.push) else {
+            return
         }
+
+        addEvent(
+            DeviceRegistrationEvent(
+                channelID: self.channel.identifier,
+                deviceToken: token
+            )
+        )
     }
 
-    private func stopTrackingScreen() {
-        self.trackScreen(nil)
-    }
+    @available(tvOS, unavailable)
+    @MainActor
+    func onNotificationResponse(
+        response: UNNotificationResponse,
+        action: UNNotificationAction?
+    ) {
+        let userInfo = response.notification.request.content.userInfo
 
-    private func updateEventManagerUploadsEnabled() {
-        if self.isAnalyticsEnabled {
-            self.eventManager.uploadsEnabled = true;
-            self.eventManager.scheduleUpload()
-        } else {
-            self.eventManager.uploadsEnabled = false
-            self.eventManager.deleteAllEvents()
-            self.dataStore.setObject(nil, forKey: Analytics.associatedIdentifiers)
-        }
-    }
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            self.launched(fromNotification: userInfo)
+        } else if let action = action {
+            let categoryID = response.notification.request.content
+                .categoryIdentifier
+            let responseText = (response as? UNTextInputNotificationResponse)?
+                .userText
 
-    private func startSession() {
-        self.sessionID = NSUUID().uuidString
-    }
-    
-    /// needed to ensure AppInit event gets added
-    /// since App Clips get launched via Push Notification delegate
-    private func ensureInit() {
-        lock.sync {
-            if (!self.initialized && self.isAirshipReady) {
-                self.addEvent(AppInitEvent())
-                self.initialized = true
+            if action.options.contains(.foreground) == true {
+                self.launched(fromNotification: userInfo)
             }
+
+            addEvent(
+                InteractiveNotificationEvent(
+                    action: action,
+                    category: categoryID,
+                    notification: userInfo,
+                    responseText: responseText
+                )
+            )
         }
     }
-    
-    public func airshipReady() {
-        self.isAirshipReady = true
-        
-        // If analytics is initialized in the background state, we are responding to a
-        // content-available push. If it's initialized in the foreground state takeOff
-        // was probably called late. We should ensure an init event in either case.
-        if self.appStateTracker.state != .inactive {
-            ensureInit()
-        }
+
+    @MainActor
+    private func addLifeCycleEvent(_ type: LifeCycleEventType) {
+        let event = self.lifeCycleEventFactory.make(type: type)
+        addEvent(event)
     }
 }
 
-extension Analytics : InternalAnalyticsProtocol {
-    func onDeviceRegistration() {
-        if (self.isAirshipReady) {
-            addEvent(DeviceRegistrationEvent())
-        }
-    }
-    
-    @available(tvOS, unavailable)
-    func onNotificationResponse(response: UNNotificationResponse, action: UNNotificationAction?) {
-        let userInfo = response.notification.request.content.userInfo
+enum LifeCycleEventType {
+    case appInit
+    case foreground
+    case background
+}
 
-        if (response.actionIdentifier == UNNotificationDefaultActionIdentifier) {
-            self.launched(fromNotification: userInfo)
-        } else if let action = action {
-            let categoryID = response.notification.request.content.categoryIdentifier
-            let responseText = (response as? UNTextInputNotificationResponse)?.userText
-            
-            if (action.options.contains(.foreground) == true) {
-                self.launched(fromNotification: userInfo)
-            }
-            
-            let event = InteractiveNotificationEvent(action: action,
-                                                       category: categoryID,
-                                                       notification: userInfo,
-                                                       responseText: responseText)
-            addEvent(event)
+protocol LifeCycleEventFactoryProtocol: Sendable {
+    @MainActor
+    func make(type: LifeCycleEventType) -> AirshipEvent
+}
+
+fileprivate final class LifeCylceEventFactory: LifeCycleEventFactoryProtocol {
+    @MainActor
+    func make(type: LifeCycleEventType) -> AirshipEvent {
+        switch (type) {
+        case .appInit:
+            return AppInitEvent()
+        case .background:
+            return AppBackgroundEvent()
+        case .foreground:
+            return AppForegroundEvent()
         }
     }
 }

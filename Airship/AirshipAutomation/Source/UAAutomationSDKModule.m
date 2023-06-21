@@ -4,6 +4,9 @@
 #import "UALegacyInAppMessaging+Internal.h"
 #import "UAInAppAutomation+Internal.h"
 #import "UAAutomationResources.h"
+#import "UALandingPageAction.h"
+#import "UACancelSchedulesAction.h"
+#import "UAScheduleAction.h"
 
 #if __has_include("AirshipKit/AirshipKit-Swift.h")
 #import <AirshipKit/AirshipKit-Swift.h>
@@ -30,23 +33,27 @@
     return self.automationComponents;
 }
 
-+ (id<UASDKModule>)loadWithDependencies:(nonnull NSDictionary *)dependencies {
+- (NSArray<id<UALegacyAction>> *)actions {
+    return @[
+        [[UALandingPageAction alloc] init],
+        [[UACancelSchedulesAction alloc] init],
+        [[UAScheduleAction alloc] init],
+    ];
+}
+
++ (id<UALegacySDKModule>)loadWithDependencies:(nonnull NSDictionary *)dependencies {
     UAPreferenceDataStore *dataStore = dependencies[UASDKDependencyKeys.dataStore];
     UARuntimeConfig *config = dependencies[UASDKDependencyKeys.config];
     UAChannel *channel = dependencies[UASDKDependencyKeys.channel];
-    UAContact *contact = dependencies[UASDKDependencyKeys.contact];
-    id<UARemoteDataProvider> remoteDataProvider = dependencies[UASDKDependencyKeys.remoteData];
+    UARemoteDataAutomationAccess *remoteData = dependencies[UASDKDependencyKeys.remoteDataAutomation];
     UAAnalytics *analytics = dependencies[UASDKDependencyKeys.analytics];
     UAPrivacyManager *privacyManager = dependencies[UASDKDependencyKeys.privacyManager];
-    
-    UAInAppAudienceManager *audienceManager = [UAInAppAudienceManager managerWithConfig:config
-                                                                              dataStore:dataStore
-                                                                                channel:channel
-                                                                              contact:contact];
+    UAAutomationAudienceOverridesProvider *audienceOverridesProvider = dependencies[UASDKDependencyKeys.automationAudienceOverridesProvider];
+
 
     UAInAppAutomation *inAppAutomation = [UAInAppAutomation automationWithConfig:config
-                                                                audienceManager:audienceManager
-                                                              remoteDataProvider:remoteDataProvider
+                                                       audienceOverridesProvider:audienceOverridesProvider
+                                                              remoteData:remoteData
                                                                        dataStore:dataStore
                                                                          channel:channel
                                                                        analytics:analytics

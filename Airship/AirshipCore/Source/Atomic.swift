@@ -1,7 +1,9 @@
 import Foundation
 
-class Atomic<T: Equatable> {
-    let lock = Lock()
+
+final class Atomic<T: Equatable & Sendable>: @unchecked Sendable {
+
+    private let lock = AirshipLock()
     private var _value: T
 
     init(_ value: T) {
@@ -22,16 +24,39 @@ class Atomic<T: Equatable> {
                 self._value = newValue
             }
         }
+
+
     }
 
+    @discardableResult
+    func setValue(_ value: T, onChange:(() -> Void)? = nil) -> Bool {
+        var changed = false
+        lock.sync {
+            if (self.value != value) {
+                self.value = value
+                changed = true
+                onChange?()
+            }
+            self.value = value
+        }
+        return changed
+    }
+
+
+    @discardableResult
     func compareAndSet(expected: T, value: T) -> Bool {
         var result = false
         lock.sync {
-            if (expected == self._value) {
+            if expected == self._value {
                 self.value = value
                 result = true
             }
         }
         return result
     }
+
 }
+
+
+
+

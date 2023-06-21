@@ -35,7 +35,6 @@
 #define kUADeferredScheduleAPIClientLocaleLanguageKey @"locale_language"
 #define kUADeferredScheduleAPIClientLocaleCountryKey @"locale_country"
 
-NSString * const UADeferredScheduleAPIClientErrorDomain = @"com.urbanairship.deferred_api_client";
 
 @interface UADeferredScheduleAPIClientResponse : NSObject
 @property (nonatomic, copy, nullable) NSDictionary *body;
@@ -48,8 +47,6 @@ NSString * const UADeferredScheduleAPIClientErrorDomain = @"com.urbanairship.def
 @end
 
 @interface UADeferredScheduleAPIClient ()
-@property(nonatomic, strong) UAAuthTokenManager *authManager;
-@property(nonatomic, strong) UADispatcher *requestDispatcher;
 @property(nonatomic, copy) UAStateOverrides * (^stateOverridesProvider)(void);
 @property(nonatomic, strong) UARuntimeConfig *config;
 @property(nonatomic, strong) UARequestSession *session;
@@ -59,8 +56,6 @@ NSString * const UADeferredScheduleAPIClientErrorDomain = @"com.urbanairship.def
 
 - (instancetype)initWithConfig:(UARuntimeConfig *)config
                        session:(UARequestSession *)session
-                    dispatcher:(UADispatcher *)dispatcher
-                   authManager:(UAAuthTokenManager *)authManager
         stateOverridesProvider:(nonnull UAStateOverrides * (^)(void))stateOverridesProvider {
 
     self = [super init];
@@ -68,32 +63,24 @@ NSString * const UADeferredScheduleAPIClientErrorDomain = @"com.urbanairship.def
     if (self) {
         self.config = config;
         self.session = session;
-        self.authManager = authManager;
-        self.requestDispatcher = dispatcher;
         self.stateOverridesProvider = stateOverridesProvider;
     }
 
     return self;
 }
 
-+ (instancetype)clientWithConfig:(UARuntimeConfig *)config authManager:(nonnull UAAuthTokenManager *)authManager {
++ (instancetype)clientWithConfig:(UARuntimeConfig *)config {
     return [[self alloc] initWithConfig:config
                                 session:[[UARequestSession alloc] initWithConfig:config]
-                             dispatcher:UADispatcher.serial
-                            authManager:authManager
                  stateOverridesProvider:[self defaultStateOverridesProvider]];
 }
 
 + (instancetype)clientWithConfig:(UARuntimeConfig *)config
                          session:(UARequestSession *)session
-                      dispatcher:(UADispatcher *)dispatcher
-                     authManager:(nonnull UAAuthTokenManager *)authManager
           stateOverridesProvider:(nonnull UAStateOverrides * (^)(void))stateOverridesProvider {
 
     return [[self alloc] initWithConfig:config
                                 session:session
-                             dispatcher:dispatcher
-                            authManager:authManager
                  stateOverridesProvider:stateOverridesProvider];
 }
 
@@ -106,60 +93,30 @@ NSString * const UADeferredScheduleAPIClientErrorDomain = @"com.urbanairship.def
 - (void)resolveURL:(NSURL *)URL
          channelID:(NSString *)channelID
     triggerContext:(nullable UAScheduleTriggerContext *)triggerContext
-      tagOverrides:(NSArray<UATagGroupUpdate *> *)tagOverrides
-attributeOverrides:(NSArray<UAAttributeUpdate *> *)attributeOverrides
+ audienceOverrides:(UAAutomationAudienceOverrides *)audienceOverrides
  completionHandler:(void (^)(UADeferredAPIClientResponse * _Nullable, NSError * _Nullable))completionHandler {
 
-    UA_WEAKIFY(self)
-    [self.requestDispatcher dispatchAsync:^{
-        UA_STRONGIFY(self)
-        __block NSString *token = [self authToken];
+    NSDictionary *headers = @{@"Accept": @"application/vnd.urbanairship+json; version=3;"};
+    NSData *body = [self requestBodyWithChannelID:channelID
+                                   triggerContext:triggerContext
+                                audienceOverrides:audienceOverrides];
 
-        if (!token) {
-            return completionHandler(nil, [self missingAuthTokenError]);
+    UARequest *request = [UARequest makeChannelAuthRequestWithChannelID:channelID
+                                                                 method:@"POST"
+                                                                    url:URL
+                                                                headers:headers
+                                                                   body:body];
+
+    [self.session performHTTPRequest:request completionHandler:^(NSData * _Nullable data, NSHTTPURLResponse * _Nullable response, NSError * _Nullable error) {
+
+        UADeferredAPIClientResponse *clientResponse = [UADeferredAPIClientResponse responseWithStatus:response.statusCode result:nil rules:nil];
+
+        if (error) {
+            UA_LTRACE(@"Deferred schedule request failed with error %@", error);
+            return completionHandler(clientResponse, error);
         }
 
-        UARequest *request = [self requestWithAuthToken:token
-                                                    URL:URL
-                                              channelID:channelID
-                                         triggerContext:triggerContext
-                                           tagOverrides:tagOverrides
-                                     attributeOverrides:attributeOverrides];
-
-        [self.session performHTTPRequest:request completionHandler:^(NSData * _Nullable data, NSHTTPURLResponse * _Nullable response, NSError * _Nullable error) {
-
-            UADeferredAPIClientResponse *clientResponse = [UADeferredAPIClientResponse responseWithStatus:response.statusCode result:nil rules:nil];
-            
-            if (error) {
-                UA_LTRACE(@"Deferred schedule request failed with error %@", error);
-                return completionHandler(clientResponse, error);
-            }
-            
-            // If unauthorized, manually expire the token and try again.
-            if (response.statusCode == 401) {
-                [self.authManager expireToken:token];
-
-                token = [self authToken];
-                
-                clientResponse = [UADeferredAPIClientResponse responseWithStatus:response.statusCode result:nil rules:nil];
-
-                if (!token) {
-                    return completionHandler(clientResponse, [self missingAuthTokenError]);
-                }
-
-                [self.session performHTTPRequest:request completionHandler:^(NSData * _Nullable data, NSHTTPURLResponse * _Nullable response, NSError * _Nullable error) {
-                    if (error) {
-                        UA_LTRACE(@"Deferred schedule request failed with error %@", error);
-                        return completionHandler(clientResponse, error);
-                    }
-                    [self handleResponse:response data:data completionHandler:completionHandler];
-                }];
-                
-                return;
-            }
-            
-            [self handleResponse:response data:data completionHandler:completionHandler];
-        }];
+        [self handleResponse:response data:data completionHandler:completionHandler];
     }];
 }
 
@@ -206,35 +163,10 @@ attributeOverrides:(NSArray<UAAttributeUpdate *> *)attributeOverrides
     
 }
 
-- (NSError *)missingAuthTokenError {
-    NSString *msg = [NSString stringWithFormat:@"Unable to retrieve auth token"];
-
-    NSError *error = [NSError errorWithDomain:UADeferredScheduleAPIClientErrorDomain
-                                         code:UADeferredScheduleAPIClientErrorMissingAuthToken
-                                     userInfo:@{NSLocalizedDescriptionKey:msg}];
-
-    return error;
-}
-
-- (NSString *)authToken {
-    __block NSString *authToken;
-    __block UASemaphore *semaphore = [[UASemaphore alloc] init];
-
-    [self.authManager tokenWithCompletionHandler:^(NSString * _Nullable token) {
-        authToken = token;
-        [semaphore signal];
-    }];
-
-    [semaphore wait];
-
-    return authToken;
-}
-
 - (NSData *)requestBodyWithChannelID:(NSString *)channelID
                       triggerContext:(nullable UAScheduleTriggerContext *)triggerContext
-                        tagOverrides:(NSArray<UATagGroupUpdate *> *)tagOverrides
-                  attributeOverrides:(NSArray<UAAttributeUpdate *> *)attributeOverrides {
-    
+                   audienceOverrides:(UAAutomationAudienceOverrides *)audienceOverrides {
+
     NSMutableDictionary *payload = [NSMutableDictionary dictionary];
     [payload addEntriesFromDictionary:@{kUADeferredScheduleAPIClientPlatformKey: kUADeferredScheduleAPIClientPlatformiOS,
                                         kUADeferredScheduleAPIClientChannelIDKey: channelID}];
@@ -247,12 +179,12 @@ attributeOverrides:(NSArray<UAAttributeUpdate *> *)attributeOverrides
         payload[kUADeferredScheduleAPIClientTriggerKey] = triggerContextPayload;
     }
 
-    if (tagOverrides.count) {
-        payload[kUADeferredScheduleAPIClientTagOverridesKey] = [self tagPayloadFromUpdates:tagOverrides];
+    if (audienceOverrides.tagsPayload.count) {
+        payload[kUADeferredScheduleAPIClientTagOverridesKey] = audienceOverrides.tagsPayload;
     }
-    
-    if (attributeOverrides.count) {
-        payload[kUADeferredScheduleAPIClientAttributeOverridesKey] = [self attributesPayloadFromUpdates:attributeOverrides];
+
+    if (audienceOverrides.attributesPayload.count) {
+        payload[kUADeferredScheduleAPIClientAttributeOverridesKey] = audienceOverrides.attributesPayload;
     }
 
     UAStateOverrides *stateOverrides = self.stateOverridesProvider();
@@ -270,28 +202,6 @@ attributeOverrides:(NSArray<UAAttributeUpdate *> *)attributeOverrides
                                              error:nil];
 }
 
-- (UARequest *)requestWithAuthToken:(NSString *)authToken
-                                URL:(NSURL *)URL
-                          channelID:(NSString *)channelID
-                     triggerContext:(nullable UAScheduleTriggerContext *)triggerContext
-                       tagOverrides:(NSArray<UATagGroupUpdate *> *)tagOverrides
-                 attributeOverrides:(NSArray<UAAttributeUpdate *> *)attributeOverrides {
-
-    UARequest *request = [UARequest requestWithBuilderBlock:^(UARequestBuilder * _Nonnull builder) {
-        builder.method = @"POST";
-        builder.url = URL;
-
-        builder.body = [self requestBodyWithChannelID:channelID
-                                       triggerContext:triggerContext
-                                         tagOverrides:tagOverrides
-                                   attributeOverrides:attributeOverrides];
-
-        [builder setValue:@"application/vnd.urbanairship+json; version=3;" header:@"Accept"];
-        [builder setValue:[@"Bearer " stringByAppendingString:authToken] header:@"Authorization"];
-    }];
-
-    return request;
-}
 
 - (UADeferredScheduleResult *)parseResponseBody:(NSDictionary *)responseBody {
     BOOL audienceMatch = [responseBody numberForKey:kUADeferredScheduleAPIClientAudienceMatchKey defaultValue:@(NO)].boolValue;
@@ -309,65 +219,6 @@ attributeOverrides:(NSArray<UAAttributeUpdate *> *)attributeOverrides
     }
 
     return [UADeferredScheduleResult resultWithMessage:message audienceMatch:audienceMatch];
-}
-
-- (id)attributesPayloadFromUpdates:(NSArray<UAAttributeUpdate *> *)updates {
-    updates = [UAAudienceUtils collapseAttributeUpdates:updates];
-    
-    NSMutableArray *payload = [NSMutableArray array];
-    NSDateFormatter *formatter = [UAUtils ISODateFormatterUTCWithDelimiter];
-    
-    for (UAAttributeUpdate *update in updates) {
-        NSMutableDictionary *attributePayload = [NSMutableDictionary dictionary];
-        NSString *type = update.type == UAAttributeUpdateTypeSet ? @"set" : @"remove";
-        [attributePayload setValue:type forKey:@"action"];
-        [attributePayload setValue:update.attribute forKey:@"key"];
-        [attributePayload setValue:update.value forKey:@"value"];
-        [attributePayload setValue:[formatter stringFromDate:update.date] forKey:@"timestamp"];
-        
-        [payload addObject:attributePayload];
-    }
-    
-    return payload;
-}
-    
-- (id)tagPayloadFromUpdates:(NSArray<UATagGroupUpdate *> *)updates {
-    updates = [UAAudienceUtils collapseTagGroupUpdates:updates];
-
-    NSMutableDictionary *payload = [NSMutableDictionary dictionary];
-    NSMutableDictionary *addTags = [NSMutableDictionary dictionary];
-    NSMutableDictionary *removeTags = [NSMutableDictionary dictionary];
-    NSMutableDictionary *setTags = [NSMutableDictionary dictionary];
-    
-    for (UATagGroupUpdate *update in updates) {
-        switch (update.type) {
-            case UATagGroupUpdateTypeAdd:
-                addTags[update.group] = update.tags;
-                break;
-
-            case UATagGroupUpdateTypeRemove:
-                removeTags[update.group] = update.tags;
-                break;
-                
-            case UATagGroupUpdateTypeSet:
-                setTags[update.group] = update.tags;
-                break;
-        }
-    }
-    
-    if (addTags.count) {
-        payload[@"add"] = addTags;
-    }
-    
-    if (removeTags.count) {
-        payload[@"remove"] = removeTags;
-    }
-    
-    if (setTags.count) {
-        payload[@"set"] = setTags;
-    }
-    
-    return payload;
 }
 
 @end

@@ -11,21 +11,30 @@ public class AirshipResources : NSObject {
         let sourceBundle = Bundle(for: AirshipResources.self)
 
         // SPM
-        if let path = mainBundle.path(forResource:"Airship_AirshipCore", ofType: "bundle") {
+        if let path = mainBundle.path(
+            forResource: "Airship_AirshipCore",
+            ofType: "bundle"
+        ) {
             if let bundle = Bundle(path: path) {
                 return bundle
             }
         }
 
         // Cocopaods (static)
-        if let path = mainBundle.path(forResource:"AirshipResources", ofType: "bundle") {
+        if let path = mainBundle.path(
+            forResource:"AirshipResources", 
+            ofType: "bundle"
+        ) {
             if let bundle = Bundle(path: path) {
                 return bundle
             }
         }
 
         // Cocopaods (framework)
-        if let path = sourceBundle.path(forResource:"AirshipResources", ofType: "bundle") {
+        if let path = sourceBundle.path(
+            forResource:"AirshipResources", 
+            ofType: "bundle"
+        ) {
             if let bundle = Bundle(path: path) {
                 return bundle
             }

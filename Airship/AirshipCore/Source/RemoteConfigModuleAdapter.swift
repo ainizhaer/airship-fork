@@ -5,27 +5,25 @@ protocol RemoteConfigModuleAdapterProtocol {
     func applyConfig(_ config: Any?, module: RemoteConfigModule)
 }
 
-enum RemoteConfigModule : String, CaseIterable {
+enum RemoteConfigModule: String, CaseIterable {
     case push
     case channel
     case analytics
     case messageCenter = "message_center"
     case inAppAutomation = "in_app_v2"
     case contact
-    case location
-    case chat
 }
 
 /// Expected module names used in remote config.
-class RemoteConfigModuleAdapter : RemoteConfigModuleAdapterProtocol {
-    
-    private func components(_ classes: [String]) -> [Component] {
+class RemoteConfigModuleAdapter: RemoteConfigModuleAdapterProtocol {
+
+    private func components(_ classes: [String]) -> [AirshipComponent] {
         return classes.compactMap {
             return Airship.component(forClassName: $0)
         }
     }
-    
-    private func components(_ module: RemoteConfigModule) -> [Component] {
+
+    private func components(_ module: RemoteConfigModule) -> [AirshipComponent] {
         switch module {
         case .push:
             return [Airship.push]
@@ -39,10 +37,6 @@ class RemoteConfigModuleAdapter : RemoteConfigModuleAdapterProtocol {
             return components(["UAInAppAutomation", "UALegacyInAppMessaging"])
         case .contact:
             return [Airship.contact]
-        case .location:
-            return components(["UALocation"])
-        case .chat:
-            return components(["UAirshipChat"])
         }
     }
 

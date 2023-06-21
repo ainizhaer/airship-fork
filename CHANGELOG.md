@@ -3,6 +3,56 @@
 
 [Migration Guides](https://github.com/urbanairship/ios-library/tree/main/Documentation/Migration)
 
+## Version 17.0.1, June 16, 2023
+Patch release that addresses potential ambiguous use errors and improves Message Center module documentation.
+Apps upgrading to SDK 17.0.0 should update to 17.0.1 instead.
+
+### Changes
+- Fixed potential `ambiguous use of overlay()` errors when using SwiftUI
+- Improved Message Center module documentation
+
+## Version 17.0.0, June 15, 2023
+Major SDK release that adds support for Stories, In-App experiences downstream of a sequence in Journeys, and improves SDK auth.
+
+This release brings several breaking changes throughout the codebase as we continue the transition from Objective-C to Swift, and as we start adopting structured concurrency.
+
+The Airship SDK now requires iOS 14+ as the minimum deployment version and Xcode 14.3+
+
+### Changes
+- Added support for Stories, a new format for Scenes
+- Added support for In-App experiences downstream of a sequence in Journeys
+- Updated minimum deployment version to iOS 14
+- Message Center module has been rewritten in Swift
+- The provided Message Center UI has been rewritten in Swift & SwiftUI
+- The provided Preference Center UI has been rewritten in SwiftUI
+- Accengage, Chat, and Location modules have been removed
+- ExtendedActions module has been removed and actions have been merged into other modules
+- A majority of the completionHandler APIs have been replaced with `async` functions
+- Renamed several classes throughout the SDK to prevent API collisions for simple classes, e.g. Config -> AirshipConfig, Channel -> AirshipChannel, etc.
+- Fixed several `sendable` warnings throughout codebase
+- Video improvements for Scenes
+- Added a new PushNotificationStatus publisher that provides the current status of push notifications
+- Actions rewritten to be sendable and are now only available from Swift
+- Improved SDK auth
+- Default In-App Automation display interval has been changed from 30 seconds to 0 seconds
+- The SDK Allow list has been updated to allow opening all URLs by default if neither `urlAllowList` or `urlAllowListScopeOpen` have been set in the config. Media URLs for In-App experiences are no longer checked on the allow list. Youtube URLs have been removed from the default `urlAllowListScopeOpen`.
+
+## Version 16.12.1, June 14, 2023
+Patch release that fixes app deep links that use the `uairship://` prefix. Any `uairship://` deep links that are not handled by Airship directly will now be delivered to the `DeepLinkDelegate`.
+
+### Changes
+- Allow the `DeepLinkDelegate` to process unhandled `uairship://` deep links
+
+## Version 16.12.0 June 12, 2023
+Minor release that adds `aspectRatio` to HTML and Modal IAA styles and a new config option `autoPauseInAppAutomationOnLaunch` to always pause IAA during app
+init to be enabled later.
+
+### Changes
+- Fixed channel restore from encrypted backups
+- Added aspectRatio to HTML and Modal IAA styles
+- Added `autoPauseInAppAutomationOnLaunch` config option
+- Fixed parsing deep link and open external URLs that contain invalid URL characters
+
 ## Version 16.11.3 March 24, 2023
 Patch release that fixing Contact update merging order, improves Scene/Survey accessibility and reporting.
 

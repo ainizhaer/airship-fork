@@ -74,6 +74,62 @@
 }
 
 /**
+ * Test in-app pager gesture event.
+ */
+- (void)testPagerGestureEvent {
+    NSDictionary *expectedData = @{
+        @"id": @{
+            @"message_id": self.scheduleID
+        },
+        @"conversion_send_id": self.analytics.conversionSendID,
+        @"conversion_metadata": self.analytics.conversionPushMetadata,
+        @"locale": self.message.renderedLocale,
+        @"source": @"urban-airship",
+        @"gesture_identifier": @"pager_gesture_id",
+        @"reporting_metadata" : @{ @"key": @"value"}
+    };
+    
+    UAInAppReporting *reporting = [UAInAppReporting pageGestureEventWithScheduleID:self.scheduleID
+                                                                        identifier:@"pager_gesture_id"
+                                                                          metadata:@{ @"key": @"value"}
+                                                                           message:self.message];
+    
+    [reporting record:self.analytics];
+    id<UAEvent> event = self.analytics.events[0];
+    
+    XCTAssertEqualObjects(event.data, expectedData);
+    XCTAssertEqualObjects(event.eventType, @"in_app_gesture");
+}
+
+/**
+ * Test in-app page automated action event.
+ */
+- (void)testPageAutomatedActionEvent {
+    NSDictionary *expectedData = @{
+        @"id": @{
+            @"message_id": self.scheduleID
+        },
+        @"conversion_send_id": self.analytics.conversionSendID,
+        @"conversion_metadata": self.analytics.conversionPushMetadata,
+        @"locale": self.message.renderedLocale,
+        @"source": @"urban-airship",
+        @"action_identifier": @"page_automated_action_id",
+        @"reporting_metadata": @{ @"key": @"value"}
+    };
+    
+    UAInAppReporting *reporting = [UAInAppReporting pageAutomatedActionEventWithScheduleID:self.scheduleID
+                                                                                identifier:@"page_automated_action_id"
+                                                                                  metadata:@{ @"key": @"value"}
+                                                                                   message:self.message];
+    
+    [reporting record:self.analytics];
+    id<UAEvent> event = self.analytics.events[0];
+    
+    XCTAssertEqualObjects(event.data, expectedData);
+    XCTAssertEqualObjects(event.eventType, @"in_app_page_action");
+}
+
+/**
  * Test in-app pager summary event.
  */
 - (void)testPagerSummaryEvent {
@@ -239,12 +295,14 @@
         @"conversion_metadata": self.analytics.conversionPushMetadata,
         @"locale": self.message.renderedLocale,
         @"source": @"urban-airship",
-        @"button_identifier": @"some-button"
+        @"button_identifier": @"some-button",
+        @"reporting_metadata": @{ @"key": @"value"}
     };
 
     UAInAppReporting *reporting = [UAInAppReporting buttonTapEventWithScheduleID:self.scheduleID
                                                                          message:self.message
-                                                                          buttonID:@"some-button"];
+                                                                        metadata:@{ @"key": @"value"}
+                                                                        buttonID:@"some-button"];
     
     [reporting record:self.analytics];
     id<UAEvent> event = self.analytics.events[0];

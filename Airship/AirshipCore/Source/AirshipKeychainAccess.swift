@@ -4,22 +4,18 @@ import Foundation
 
 /// Keychain credentials
 /// - Note: for internal use only.  :nodoc:
-@objc(UAirshipKeychainCredentials)
-public class AirshipKeychainCredentials: NSObject {
+public struct AirshipKeychainCredentials: Sendable {
 
     /// The username
-    @objc
     public let username: String
 
     /// The password
-    @objc
     public let password: String
 
     /// Constructor
     /// - Parameters:
     ///     - username: The username
     ///     - password: The password
-    @objc
     public init(username: String, password: String) {
         self.username = username
         self.password = password
@@ -28,40 +24,70 @@ public class AirshipKeychainCredentials: NSObject {
 
 /// Keychain access
 /// - Note: for internal use only.  :nodoc:
-@objc(UAirshipKeychainAccess)
-public class AirshipKeychainAccess: NSObject {
-
-    private let appKey: String
-    private let dispatcher = UADispatcher.serialUtility()
-    private let service: String
-
-    /// Creates a key chain access for data stored under the app key.
-    /// - Parameters:
-    ///     - appKey: The app key
-    @objc
-    public init(appKey: String) {
-        self.appKey = appKey
-        self.service = "\(Bundle.main.bundleIdentifier ?? "").airship.\(appKey)"
-    }
-
+public protocol AirshipKeychainAccessProtocol: Sendable {
     /// Writes credentials to the keychain for the given identifier.
     /// - Parameters:
     ///     - credentials: The credentails to save
     ///     - identifier: The credential's identifier
-    ///     - completionHandler: The completion handler with the result
-    @objc
+    ///     - appKey: The app key
+    /// - Returns: `true` if the data was written, otherwise `false`.
+    func writeCredentials(
+        _ credentials: AirshipKeychainCredentials,
+        identifier: String,
+        appKey: String
+    ) async -> Bool
+
+    /// Deltes credentials for the given identifier.
+    /// - Parameters:
+    ///     - identifier: The credential's identifier
+    ///     - appKey: The app key
+    func deleteCredentials(
+        identifier: String,
+        appKey: String
+    ) async
+
+    /// Reads credentials from the keychain synchronously.
+    ///
+    /// - NOTE: This method could take a long time to call, it should not
+    /// be called on the main queue.
+    ///
+    /// - Parameters:
+    ///     - identifier: The credential's identifier
+    ///     - appKey: The app key
+    /// - Returns: The credentials if found.
+    func readCredentails(
+        identifier: String,
+        appKey: String
+    ) async -> AirshipKeychainCredentials?
+}
+
+/// Keychain access
+/// - Note: for internal use only.  :nodoc:
+public final class AirshipKeychainAccess: AirshipKeychainAccessProtocol {
+
+    public static let shared = AirshipKeychainAccess()
+
+    // Dispatch queue to prevent blocking any tasks
+    private let dispatchQueue: AirshipUnsafeSendableWrapper<DispatchQueue> = AirshipUnsafeSendableWrapper(
+        DispatchQueue(
+            label: "com.urbanairship.dispatcher.keychain",
+            qos: .utility
+        )
+    )
+
     public func writeCredentials(
         _ credentials: AirshipKeychainCredentials,
         identifier: String,
-        completionHandler: ((Bool) -> Void)?
-    ) {
-        dispatcher.dispatchAsync {
+        appKey: String
+    ) async -> Bool {
+        let service = service(appKey: appKey)
+        return await self.dispatch { [service] in
             let result = Keychain.writeCredentials(
                 credentials,
                 identifier: identifier,
-                service: self.service
+                service: service
             )
-            
+
             // Write to old location in case of a downgrade
             if let bundleID = Bundle.main.bundleIdentifier {
                 let _ = Keychain.writeCredentials(
@@ -70,20 +96,19 @@ public class AirshipKeychainAccess: NSObject {
                     service: bundleID
                 )
             }
-            
-            completionHandler?(result)
+
+
+            return result
         }
     }
 
-    /// Deltes credentials for the given identifier.
-    /// - Parameters:
-    ///     - identifier: The credential's identifier
-    @objc
-    public func deleteCredentials(identifier: String) {
-        self.dispatcher.dispatchAsync {
+    public func deleteCredentials(identifier: String, appKey: String) async {
+        let service = service(appKey: appKey)
+
+        await self.dispatch { [service] in
             Keychain.deleteCredentials(
                 identifier: identifier,
-                service: self.service
+                service: service
             )
 
             // Delete old
@@ -96,89 +121,70 @@ public class AirshipKeychainAccess: NSObject {
         }
     }
 
-    /// Reads credentials from the keychain synchronously.
-    ///
-    /// - NOTE: This method could take a long time to call, it should not
-    /// be called on the main queue.
-    ///
-    /// - Parameters:
-    ///     - identifier: The credential's identifier
-    /// - Returns: The credentials if found.
-    @objc
-    public func readCredentialsSync(
-        identifier: String
-    ) -> AirshipKeychainCredentials? {
-        var credentials: AirshipKeychainCredentials?
-        self.dispatcher.dispatchSync {
-            credentials = self.readCredentialsHelper(
-                identifier: identifier
-            )
-        }
-        return credentials
-    }
-
-    /// Reads credentials from the keychain.
-    /// - Parameters:
-    ///     - identifier: The credential's identifier
-    ///     - completionHandler: The completion handler with the result
-    @objc
-    public func readCredentials(
+    public func readCredentails(
         identifier: String,
-        completionHandler: @escaping(AirshipKeychainCredentials?
-    ) -> Void) {
-        self.dispatcher.dispatchAsync {
-            let credentials = self.readCredentialsHelper(
-                identifier: identifier
-            )
-            completionHandler(credentials)
+        appKey: String
+    ) async -> AirshipKeychainCredentials? {
+
+        let service = service(appKey: appKey)
+
+        return await self.dispatch { [service] in
+            if let credentials = Keychain.readCredentials(
+                identifier: identifier,
+                service: service
+            ) {
+                return credentials
+            }
+
+            // If we do not have a new value, check
+            // the old service location
+            if let bundleID = Bundle.main.bundleIdentifier {
+
+                let old = Keychain.readCredentials(
+                    identifier: identifier,
+                    service: bundleID
+                )
+
+                if let old = old {
+                    // Migrate old data to new service location
+                    let _ = Keychain.writeCredentials(
+                        old,
+                        identifier: identifier,
+                        service: service
+                    )
+                    return old
+                }
+            }
+            return nil
         }
+
     }
 
-    /// Helper method that migrates data from the old storage location to the new on read.
-    private func readCredentialsHelper(identifier: String) -> AirshipKeychainCredentials? {
-        if let credentials = Keychain.readCredentials(
-            identifier: identifier,
-            service: self.service
-        ) {
-            return credentials
-        }
-        
-        // If we do not have a new value, check
-        // the old service location
-        if let bundleID = Bundle.main.bundleIdentifier {
-            
-            let old = Keychain.readCredentials(
-                identifier: identifier,
-                service: bundleID
-            )
-            
-            if let old = old {
-                // Migrate old data to new service location
-                let _ = Keychain.writeCredentials(
-                    old,
-                    identifier: identifier,
-                    service: self.service
-                )
-                
-                return old
+    private func dispatch<T>(block: @escaping @Sendable () -> T) async -> T {
+        return await withCheckedContinuation { continuation in
+            dispatchQueue.value.async {
+                continuation.resume(returning: block())
             }
         }
-        
-        return nil
+    }
+
+    private func service(appKey: String) -> String {
+        return "\(Bundle.main.bundleIdentifier ?? "").airship.\(appKey)"
     }
 }
 
+
 /// Helper that wraps the actual keychain calls
-fileprivate struct Keychain {
+private struct Keychain {
     static func writeCredentials(
         _ credentials: AirshipKeychainCredentials,
         identifier: String,
         service: String
     ) -> Bool {
         guard let identifierData = identifier.data(using: .utf8),
-              let passwordData = credentials.password.data(
+            let passwordData = credentials.password.data(
                 using: .utf8
-              )
+            )
         else {
             return false
         }
@@ -186,12 +192,12 @@ fileprivate struct Keychain {
         deleteCredentials(identifier: identifier, service: service)
 
         let addquery: [String: Any] = [
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrGeneric as String: identifierData,
             kSecAttrAccount as String: credentials.username,
-            kSecValueData as String: passwordData
+            kSecValueData as String: passwordData,
         ]
 
         let status = SecItemAdd(addquery as CFDictionary, nil)
@@ -230,8 +236,9 @@ fileprivate struct Keychain {
             kSecAttrService as String: service,
             kSecAttrGeneric as String: identifierData,
             kSecReturnAttributes as String: true,
-            kSecReturnData as String: true
+            kSecReturnData as String: true,
         ]
+        
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(searchQuery as CFDictionary, &item)
@@ -239,17 +246,53 @@ fileprivate struct Keychain {
             return nil
         }
 
-        guard let existingItem = item as? [String : Any],
-              let passwordData = existingItem[kSecValueData as String] as? Data,
-              let password = String(data: passwordData, encoding: String.Encoding.utf8),
+        guard let existingItem = item as? [String: Any] else {
+            return nil
+        }
+
+        guard let passwordData = existingItem[kSecValueData as String] as? Data,
+              let password = String(
+                data: passwordData,
+                encoding: String.Encoding.utf8
+              ),
               let username = existingItem[kSecAttrAccount as String] as? String
         else {
             return nil
+        }
+
+        let attrAccessible = existingItem[kSecAttrAccessible as String] as? String
+        if attrAccessible != (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String) {
+            updateThisDeviceOnly(identifier: identifier, service: service)
         }
 
         return AirshipKeychainCredentials(
             username: username,
             password: password
         )
+    }
+
+    static func updateThisDeviceOnly(identifier: String, service: String) {
+        guard let identifierData = identifier.data(using: .utf8) else {
+            return
+        }
+
+        let updateQuery: [String: Any] = [
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+
+        let searchQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecAttrService as String: service,
+            kSecAttrGeneric as String: identifierData
+        ]
+
+        let updateStatus = SecItemUpdate(searchQuery as CFDictionary, updateQuery as CFDictionary)
+
+        if (updateStatus == errSecSuccess) {
+            AirshipLogger.trace("Updated keychain value \(identifier) to this device only")
+        } else {
+            AirshipLogger.error("Failed to update keychain value \(identifier) status:\(updateStatus)")
+        }
     }
 }

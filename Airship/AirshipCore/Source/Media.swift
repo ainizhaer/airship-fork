@@ -4,18 +4,26 @@ import Foundation
 import SwiftUI
 
 /// Media view.
-@available(iOS 13.0.0, tvOS 13.0, *)
-struct Media : View {
-    
+
+struct Media: View {
+
     let model: MediaModel
     let constraints: ViewConstraints
-    
+    @EnvironmentObject var thomasEnvironment: ThomasEnvironment
+
     var body: some View {
         switch model.mediaType {
         case .image:
-            AirshipAsyncImage(url: self.model.url) { image, imageSize in
+            AirshipAsyncImage(
+                url: self.model.url,
+                imageLoader: thomasEnvironment.imageLoader
+            ) { image, imageSize in
                 image
-                    .fitMedia(mediaFit:self.model.mediaFit, constraints: constraints, imageSize: imageSize)
+                    .fitMedia(
+                        mediaFit: self.model.mediaFit,
+                        constraints: constraints,
+                        imageSize: imageSize
+                    )
             } placeholder: {
                 AirshipProgressView()
             }
@@ -25,31 +33,41 @@ struct Media : View {
             .common(self.model)
             .accessible(self.model, hideIfNotSet: true)
         case .video, .youtube:
-#if !os(tvOS) && !os(watchOS)
-            MediaWebView(url: model.url,
-                         type: model.mediaType,
-                         accessibilityLabel: model.contentDescription)
-                .constraints(constraints)
-                .applyIf(self.constraints.width != nil || self.constraints.height != nil) {
-                    $0.aspectRatio(16.0/9.0, contentMode: .fit)
-                }
-                .background(self.model.backgroundColor)
-                .border(self.model.border)
-                .common(self.model)
-#endif
+            #if !os(tvOS) && !os(watchOS)
+            MediaWebView(
+                url: model.url,
+                type: model.mediaType,
+                accessibilityLabel: model.contentDescription,
+                video: model.video
+            )
+            .constraints(constraints)
+            .applyIf(
+                self.constraints.width != nil
+                    || self.constraints.height != nil
+            ) {
+                $0.aspectRatio((CGFloat)(model.video?.aspectRatio ?? 16.0 / 9.0), contentMode: .fit)
+            }
+            .background(self.model.backgroundColor)
+            .border(self.model.border)
+            .common(self.model)
+            #endif
         }
     }
 }
 
-@available(iOS 13.0.0, tvOS 13.0.0, *)
 extension Image {
-    
-    @ViewBuilder
-    func fitMedia(mediaFit: MediaFit,
-                  constraints: ViewConstraints,
-                  imageSize: CGSize) -> some View {
 
-        let filledInConstraints = filledInConstraints(constraints: constraints, imageSize: imageSize)
+    @ViewBuilder
+    func fitMedia(
+        mediaFit: MediaFit,
+        constraints: ViewConstraints,
+        imageSize: CGSize
+    ) -> some View {
+
+        let filledInConstraints = filledInConstraints(
+            constraints: constraints,
+            imageSize: imageSize
+        )
 
         switch mediaFit {
         case .center:
@@ -66,12 +84,12 @@ extension Image {
             centerInside(constraints: filledInConstraints)
         }
     }
-    
+
     private func center(constraints: ViewConstraints) -> some View {
         self.constraints(constraints, fixedSize: true)
             .clipped()
     }
-    
+
     private func centerCrop(constraints: ViewConstraints) -> some View {
 
         /*
@@ -83,13 +101,17 @@ extension Image {
                 GeometryReader { proxy in
                     self.resizable()
                         .scaledToFill()
-                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .frame(
+                            width: proxy.size.width,
+                            height: proxy.size.height
+                        )
                         .allowsHitTesting(false)
-                })
+                }
+            )
             .constraints(constraints, fixedSize: true)
             .clipped()
     }
-    
+
     private func centerInside(constraints: ViewConstraints) -> some View {
         self.resizable()
             .scaledToFit()
@@ -97,36 +119,44 @@ extension Image {
             .clipped()
     }
 
-    private func filledInConstraints(constraints: ViewConstraints, imageSize: CGSize) -> ViewConstraints {
-        guard imageSize.width != 0, imageSize.height != 0, constraints.width == nil || constraints.height == nil else {
+    private func filledInConstraints(
+        constraints: ViewConstraints,
+        imageSize: CGSize
+    ) -> ViewConstraints {
+        guard imageSize.width != 0, imageSize.height != 0,
+            constraints.width == nil || constraints.height == nil
+        else {
             return constraints
         }
-        
+
         // Fill in any missing constraints
         var modifiedConstraints = constraints
         if let height = constraints.height {
-            modifiedConstraints.width = modifiedConstraints.width ?? ((imageSize.width / imageSize.height) * height)
+            modifiedConstraints.width =
+                modifiedConstraints.width
+                ?? ((imageSize.width / imageSize.height) * height)
             modifiedConstraints.isHorizontalFixedSize = true
         } else if let width = constraints.width {
-            modifiedConstraints.height = modifiedConstraints.height ?? ((imageSize.height / imageSize.width) * width)
+            modifiedConstraints.height =
+                modifiedConstraints.height
+                ?? ((imageSize.height / imageSize.width) * width)
             modifiedConstraints.isVerticalFixedSize = true
         }
         return modifiedConstraints
     }
 
-    private func isUnbounded(_ constraints: ViewConstraints)  -> Bool {
-        if (constraints.width != nil && constraints.height != nil) {
+    private func isUnbounded(_ constraints: ViewConstraints) -> Bool {
+        if constraints.width != nil && constraints.height != nil {
             return false
         }
 
-        if (constraints.width == nil && constraints.height == nil) {
+        if constraints.width == nil && constraints.height == nil {
             return false
         }
 
-        if (constraints.width == nil) {
-            return !constraints.isVerticalFixedSize
-        } else {
+        guard constraints.width == nil else {
             return !constraints.isHorizontalFixedSize
         }
+        return !constraints.isVerticalFixedSize
     }
 }

@@ -5,6 +5,7 @@
 #import "UAInAppMessageButtonStyle.h"
 #import "UAInAppMessageMediaStyle.h"
 #import "UAAirshipAutomationCoreImport.h"
+#import "UAPadding.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -63,6 +64,11 @@ NS_SWIFT_NAME(InAppMessageHTMLStyle)
  * The max height in points.
  */
 @property(nonatomic, strong, nullable) NSNumber *maxHeight;
+
+/**
+ * The aspect ratio.
+ */
+@property(nonatomic, strong, nullable) NSNumber *aspectRatio;
 
 /**
  * Flag to hide the dismiss icon.

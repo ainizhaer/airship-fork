@@ -5,7 +5,7 @@
 #import "UAInAppMessageButtonStyle.h"
 #import "UAInAppMessageMediaStyle.h"
 #import "UAAirshipAutomationCoreImport.h"
-
+#import "UAPadding.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -55,6 +55,11 @@ extern NSString *const UAModalMaxWidthKey;
 extern NSString *const UAModalMaxHeightKey;
 
 /**
+ * The key representing the aspect ratio in a style plist.
+ */
+extern NSString *const UAModalAspectRatioKey;
+
+/**
  * Model object representing a custom style to be applied
  * to modal in-app messages.
  */
@@ -84,6 +89,11 @@ NS_SWIFT_NAME(InAppMessageModalStyle)
  * The max height in points.
  */
 @property(nonatomic, strong, nullable) NSNumber *maxHeight;
+
+/**
+ * The aspect ratio.
+ */
+@property(nonatomic, strong, nullable) NSNumber *aspectRatio;
 
 /**
  * The header text style

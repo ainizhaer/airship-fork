@@ -19,6 +19,9 @@
 
 static NSString *const ResizingViewControllerNibName = @"UAInAppMessageResizableViewController";
 
+static float ResizingViewControllerMaxWidth = 420.0;
+static float ResizingViewControllerMaxHeight = 720.0;
+
 
 /**
  * The in-app message resizing view interface necessary for rounded corners.
@@ -184,12 +187,12 @@ static double const DefaultResizableViewAnimationDuration = 0.2;
 
 - (BOOL)isFullScreen {
     if (self.allowFullScreenDisplay) {
-        if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
+        if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
             return self.extendFullScreenLargeDevice;
         } else {
             return YES;
         }
-    }
+    }    
     return NO;
 }
 
@@ -230,31 +233,43 @@ static double const DefaultResizableViewAnimationDuration = 0.2;
             constraint.priority = 999;
             constraint.active = YES;
         } else {
-            CGFloat maxWidth = self.maxWidth == nil ? 420.0 : self.maxWidth.floatValue;
+            CGFloat maxWidth = self.maxWidth == nil ? ResizingViewControllerMaxWidth : self.maxWidth.floatValue;
+            if (!self.aspectLock && self.aspectRatio) {
+                [NSLayoutConstraint constraintWithItem:self.resizingContainerView
+                                             attribute:NSLayoutAttributeWidth
+                                             relatedBy:NSLayoutRelationEqual
+                                                toItem:self.resizingContainerView
+                                             attribute:NSLayoutAttributeHeight
+                                            multiplier:[self.aspectRatio doubleValue]
+                                              constant:0.0f].active = YES;
+            }
             [NSLayoutConstraint constraintWithItem:self.resizingContainerView
-                                         attribute:NSLayoutAttributeWidth
-                                         relatedBy:NSLayoutRelationLessThanOrEqual
-                                            toItem:nil
-                                         attribute:NSLayoutAttributeNotAnAttribute
-                                        multiplier:1
-                                          constant:maxWidth].active = YES;
+                                             attribute:NSLayoutAttributeWidth
+                                             relatedBy:NSLayoutRelationLessThanOrEqual
+                                                toItem:nil
+                                             attribute:NSLayoutAttributeNotAnAttribute
+                                            multiplier:1
+                                              constant:maxWidth].active = YES;
+            
         }
 
 
         if (self.size.height > 0) {
-            self.heightConstraint.active = NO;
-            NSLayoutConstraint *constraint = [NSLayoutConstraint constraintWithItem:self.resizingContainerView
-                                                                          attribute:NSLayoutAttributeHeight
-                                                                          relatedBy:NSLayoutRelationEqual
-                                                                             toItem:nil
-                                                                          attribute:NSLayoutAttributeNotAnAttribute
-                                                                         multiplier:1
-                                                                           constant:self.size.height];
-
-            constraint.priority = 999;
-            constraint.active = YES;
+            if (!self.aspectRatio) {
+                self.heightConstraint.active = NO;
+                NSLayoutConstraint *constraint = [NSLayoutConstraint constraintWithItem:self.resizingContainerView
+                                                                              attribute:NSLayoutAttributeHeight
+                                                                              relatedBy:NSLayoutRelationEqual
+                                                                                 toItem:nil
+                                                                              attribute:NSLayoutAttributeNotAnAttribute
+                                                                             multiplier:1
+                                                                               constant:self.size.height];
+                
+                constraint.priority = 999;
+                constraint.active = YES;
+            }
         } else {
-            CGFloat maxHeight = self.maxHeight == nil ? 720.0 : self.maxHeight.floatValue;
+            CGFloat maxHeight = self.maxHeight == nil ? ResizingViewControllerMaxHeight : self.maxHeight.floatValue;
 
             // Set max height
             [NSLayoutConstraint constraintWithItem:self.resizingContainerView
@@ -313,11 +328,6 @@ static double const DefaultResizableViewAnimationDuration = 0.2;
 #pragma mark -
 #pragma mark Core Functionality
 
-- (void)displayWindow:(void (^)(UAInAppMessageResolution * _Nonnull))completionHandler {
-    self.showCompletionHandler = completionHandler;
-    [self.topWindow makeKeyAndVisible];
-}
-
 - (void)observeSceneEvents API_AVAILABLE(ios(13.0)) {
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(sceneRemoved:)
@@ -331,24 +341,14 @@ static double const DefaultResizableViewAnimationDuration = 0.2;
     }
 }
 
-- (void)showWithCompletionHandler:(void (^)(UAInAppMessageResolution * _Nonnull))completionHandler {
-    if (self.isShowing) {
-        UA_LTRACE(@"In-app message resizable view has already been displayed");
-        return;
-    }
-
-    self.topWindow = [UAUtils createWindowWithRootViewController:self];
-    [self displayWindow:completionHandler];
-}
-
 - (void)showWithScene:(UIWindowScene *)scene completionHandler:(void (^)(UAInAppMessageResolution * _Nonnull))completionHandler {
     if (self.isShowing) {
         UA_LTRACE(@"In-app message resizable view has already been displayed");
         return;
     }
 
-    self.topWindow = [UAUtils createWindowWithScene:scene
-                                 rootViewController:self];
+    self.topWindow = [[UIWindow alloc] initWithWindowScene:scene];
+    self.topWindow.rootViewController = self;
     [self observeSceneEvents];
 
     #if TARGET_OS_MACCATALYST
@@ -356,7 +356,8 @@ static double const DefaultResizableViewAnimationDuration = 0.2;
     self.previousKeyWindow = [UAInAppMessageUtils keyWindowFromScene:scene];
     #endif
 
-    [self displayWindow:completionHandler];
+    self.showCompletionHandler = completionHandler;
+    [self.topWindow makeKeyAndVisible];
 }
 
 - (void)tearDown {
