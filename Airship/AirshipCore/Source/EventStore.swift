@@ -20,7 +20,7 @@ actor EventStore {
             format: EventStore.fileFormat,
             appKey
         )
-        let modelURL = AirshipCoreResources.bundle.url(
+        let modelURL = AirshipResources.bundle.url(
             forResource: "UAEvents",
             withExtension: "momd"
         )
